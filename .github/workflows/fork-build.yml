@@ -1,0 +1,190 @@
+name: Fork Build
+
+# Publishes Linux binaries of this fork so every machine can install the
+# fork-local features without a Rust toolchain.
+#
+# Upstream's release.yml only fires on `v*` tags and builds five platforms for
+# herdrdev/herdr. This one fires on every master push, builds the two Linux
+# targets this fork actually runs on, and publishes them under a dated tag that
+# `herdr-selfupdate --from-release` downloads.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "vendor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "rust-toolchain.toml"
+      - ".github/workflows/fork-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN_VERSION: 1.96.1
+
+concurrency:
+  group: fork-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          components: rustfmt
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: fork-test
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run tests
+        run: cargo nextest run --locked
+
+  build:
+    needs: test
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            name: herdr-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            name: herdr-linux-aarch64
+
+    runs-on: ubuntu-latest
+    env:
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
+      LIBGHOSTTY_VT_SIMD: 'true'
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: ${{ matrix.target }}
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build musl-tools gcc-aarch64-linux-gnu crossbuild-essential-arm64
+
+      - name: Set aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: fork-build-${{ matrix.target }}
+
+      - name: Remove Zig caches
+        run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package artifact
+        run: cp target/${{ matrix.target }}/release/herdr ${{ matrix.name }}
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+
+      - name: Assemble release
+        id: assemble
+        run: |
+          mkdir -p release
+          cp artifacts/herdr-linux-x86_64/herdr-linux-x86_64 release/
+          cp artifacts/herdr-linux-aarch64/herdr-linux-aarch64 release/
+          chmod 755 release/*
+
+          tag="fork-$(date -u +%Y%m%d-%H%M)-$(git rev-parse --short HEAD)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # The installer reads these digests to verify what it downloaded.
+          (cd release && sha256sum herdr-linux-* > SHA256SUMS)
+
+          {
+            echo "Fork build of \`$(git rev-parse --short HEAD)\` on $(date -u '+%Y-%m-%d %H:%M UTC')."
+            echo
+            echo "Upstream base: \`$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')\`"
+            echo
+            echo '### Install'
+            echo
+            echo '```bash'
+            echo 'herdr-selfupdate --from-release'
+            echo '```'
+            echo
+            echo '### SHA-256'
+            echo
+            echo '```'
+            cat release/SHA256SUMS
+            echo '```'
+          } > RELEASE_BODY.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
+        with:
+          tag_name: ${{ steps.assemble.outputs.tag }}
+          name: ${{ steps.assemble.outputs.tag }}
+          body_path: RELEASE_BODY.md
+          files: |
+            release/herdr-linux-x86_64
+            release/herdr-linux-aarch64
+            release/SHA256SUMS
