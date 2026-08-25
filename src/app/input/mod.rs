@@ -38,6 +38,9 @@ fn modified_url_click_modifier_matches_terminal_mouse_reporting() {
 
 mod clipboard;
 mod copy_mode;
+mod git_diff;
+mod git_menu;
+mod git_picker;
 mod lease;
 mod modal;
 mod mouse;
@@ -46,6 +49,7 @@ mod overlays;
 mod selection;
 mod settings;
 mod sidebar;
+mod sidebar_git;
 mod terminal;
 
 pub(crate) use self::{
@@ -117,6 +121,10 @@ impl App {
                 Mode::Navigator => {
                     handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event)
                 }
+                Mode::SidebarGit => self.handle_sidebar_git_key(key_event),
+                Mode::GitDiff => self.handle_git_diff_key(key_event),
+                Mode::GitPicker => self.handle_git_picker_key(key_event),
+                Mode::GitBranchCreate => self.handle_git_branch_create_key(key_event),
                 Mode::Terminal => unreachable!(),
             },
         }
@@ -211,6 +219,17 @@ impl App {
         match self.state.mode {
             Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
                 insert_rename_input_text(&mut self.state, text);
+                true
+            }
+            Mode::GitBranchCreate => {
+                self.state.name_input.push_str(text);
+                true
+            }
+            Mode::SidebarGit
+                if self.state.git_sidebar.focus
+                    == crate::app::state::GitSidebarFocus::CommitBox =>
+            {
+                self.state.git_sidebar.commit_message.push_str(text);
                 true
             }
             Mode::NewLinkedWorktree => {
@@ -446,6 +465,30 @@ impl App {
                     MouseAction::ContextMenu { menu, idx } => {
                         self.apply_context_menu_action_via_api(menu, idx)
                     }
+                    MouseAction::CloseGitDiff => self.close_git_diff_view(),
+                    MouseAction::FocusGitCommitBox => {
+                        self.state.mode = Mode::SidebarGit;
+                        self.state.git_sidebar.focus =
+                            crate::app::state::GitSidebarFocus::CommitBox;
+                    }
+                    MouseAction::OpenGitDiff {
+                        path,
+                        staged,
+                        untracked,
+                    } => {
+                        if let Some(repo_root) = self.git_panel_repo_root() {
+                            self.open_git_diff(repo_root, path, staged, untracked);
+                        }
+                    }
+                    MouseAction::GitFileAction { path, action } => {
+                        if let Some(repo_root) = self.git_panel_repo_root() {
+                            self.start_git_file_action(repo_root, path, action);
+                        }
+                    }
+                    MouseAction::RequestGitDiscard { path } => {
+                        self.state.git_sidebar.pending_discard = Some(path);
+                    }
+                    MouseAction::SubmitGitCommit => self.submit_git_commit(),
                 }
             }
             if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
@@ -733,6 +776,10 @@ pub(crate) fn modal_paste_target_active(state: &AppState) -> bool {
             .worktree_open
             .as_ref()
             .is_some_and(|open| open.search_focused),
+        Mode::GitBranchCreate => true,
+        Mode::SidebarGit => {
+            state.git_sidebar.focus == crate::app::state::GitSidebarFocus::CommitBox
+        }
         Mode::Navigator => state.navigator.search_focused,
         Mode::KeybindHelp => state.keybind_help.search_focused,
         Mode::Copy => state

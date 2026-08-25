@@ -14,7 +14,11 @@ mod api_helpers;
 pub(crate) use api_helpers::limit_snapshot_lines;
 mod config_io;
 mod creation;
+mod git_commands;
+mod git_diff_fetch;
+mod git_file_actions;
 mod git_refresh;
+mod git_working_tree_refresh;
 mod ids;
 mod input;
 pub(crate) mod pane_graphics;
@@ -41,6 +45,7 @@ pub(crate) const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis
 const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 const GIT_REPO_DISCOVERY_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const GIT_WORKING_TREE_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
@@ -61,7 +66,7 @@ use tracing::info;
 use crate::config::Config;
 use crate::events::AppEvent;
 
-pub use state::{AppState, Mode, ToastKind, ViewState};
+pub use state::{AppState, GitSidebarFocus, Mode, SidebarSpacesView, ToastKind, ViewState};
 
 pub(crate) fn load_plugin_manifest(
     path: &str,
@@ -122,6 +127,10 @@ pub struct App {
     pub(crate) git_refresh_due_after_in_flight: bool,
     pub(crate) git_identity_refresh_requested: bool,
     pub(crate) git_status_cache: HashMap<std::path::PathBuf, crate::workspace::GitStatusCacheEntry>,
+    pub(crate) last_git_working_tree_refresh: Instant,
+    pub(crate) git_working_tree_refresh_in_flight: bool,
+    pub(crate) git_diff_fetch_generation: u64,
+    pub(crate) git_picker_generation: u64,
     pub(crate) pending_api_worktree_creates: HashMap<std::path::PathBuf, u64>,
     pub(crate) pending_api_worktree_removes: HashMap<String, u64>,
     pub(crate) pending_api_worktree_remove_paths: HashMap<std::path::PathBuf, u64>,
@@ -609,6 +618,12 @@ impl App {
                 layout: state::ViewLayout::Desktop,
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                sidebar_tab_hit_areas: Vec::new(),
+                git_file_row_areas: Vec::new(),
+                git_commit_box_rect: Rect::default(),
+                git_commit_submit_hit_area: Rect::default(),
+                git_diff_close_hit_area: Rect::default(),
+                git_diff_max_scroll: 0,
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
@@ -654,6 +669,10 @@ impl App {
             agent_view_override: None,
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
+            sidebar_spaces_view: state::SidebarSpacesView::Spaces,
+            git_sidebar: state::GitSidebarState::default(),
+            git_diff_view: None,
+            git_picker: None,
             next_agent_state_change_seq: 0,
             mouse_capture: config.ui.mouse_capture,
             copy_on_select: config.ui.copy_on_select,
@@ -773,6 +792,10 @@ impl App {
             git_refresh_due_after_in_flight: false,
             git_identity_refresh_requested: false,
             git_status_cache: HashMap::new(),
+            last_git_working_tree_refresh: Instant::now() - GIT_WORKING_TREE_REFRESH_INTERVAL,
+            git_working_tree_refresh_in_flight: false,
+            git_diff_fetch_generation: 0,
+            git_picker_generation: 0,
             pending_api_worktree_creates: HashMap::new(),
             pending_api_worktree_removes: HashMap::new(),
             pending_api_worktree_remove_paths: HashMap::new(),
@@ -1961,6 +1984,18 @@ impl App {
             }
             Mode::Navigator => {
                 input::handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event);
+            }
+            Mode::SidebarGit => {
+                self.handle_sidebar_git_key(key_event);
+            }
+            Mode::GitDiff => {
+                self.handle_git_diff_key(key_event);
+            }
+            Mode::GitPicker => {
+                self.handle_git_picker_key(key_event);
+            }
+            Mode::GitBranchCreate => {
+                self.handle_git_branch_create_key(key_event);
             }
             Mode::Terminal => {
                 // Should not be called in terminal mode.

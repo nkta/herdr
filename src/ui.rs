@@ -6,6 +6,9 @@ use ratatui::{
 };
 
 mod dialogs;
+mod diff_view;
+mod git_panel;
+mod git_picker;
 mod keybind_help;
 mod menus;
 mod mobile;
@@ -26,6 +29,7 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
+use self::git_picker::{render_git_branch_create_overlay, render_git_picker_overlay};
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
     render_context_menu, render_copy_mode_overlay, render_global_launcher_menu,
@@ -100,7 +104,7 @@ pub(crate) use self::{
     widgets::{centered_popup_rect, modal_stack_areas},
 };
 use crate::app::state::ViewLayout;
-use crate::app::{AppState, Mode};
+use crate::app::{AppState, Mode, SidebarSpacesView};
 use crate::terminal::TerminalRuntimeRegistry;
 
 const COLLAPSED_WIDTH: u16 = 4; // num + space + dot + separator
@@ -261,6 +265,67 @@ fn compute_view_internal(
         compute_workspace_card_areas(app, sidebar_area)
     };
 
+    let (
+        sidebar_tab_hit_areas,
+        git_file_row_areas,
+        git_commit_box_rect,
+        git_commit_submit_hit_area,
+    ) = if app.sidebar_collapsed {
+        (Vec::new(), Vec::new(), Rect::default(), Rect::default())
+    } else {
+        let (ws_area, _) = expanded_sidebar_sections(sidebar_area, app.sidebar_section_split);
+        let tab_hit_areas =
+            git_panel::sidebar_tab_hit_areas(Rect::new(ws_area.x, ws_area.y, ws_area.width, 1));
+        if app.sidebar_spaces_view == SidebarSpacesView::Git
+            && ws_area.height > sidebar::WORKSPACE_SECTION_HEADER_ROWS
+        {
+            let git_area = Rect::new(
+                ws_area.x,
+                ws_area.y + sidebar::WORKSPACE_SECTION_HEADER_ROWS,
+                ws_area.width,
+                ws_area.height - sidebar::WORKSPACE_SECTION_HEADER_ROWS,
+            );
+            // Clamp the offset and keep the cursor on screen before laying rows out, so keyboard
+            // navigation past the fold scrolls instead of selecting invisible rows.
+            let capacity = git_panel::git_file_list_capacity(git_area);
+            let total_rows = app.git_sidebar.rows().len();
+            let max_scroll = total_rows.saturating_sub(capacity);
+            let selected = app.git_sidebar.selected.selected;
+            let mut scroll = app.git_sidebar.scroll.min(max_scroll);
+            if selected < scroll {
+                scroll = selected;
+            } else if capacity > 0 && selected >= scroll + capacity {
+                scroll = selected + 1 - capacity;
+            }
+            app.git_sidebar.scroll = scroll.min(max_scroll);
+
+            let file_rows = git_panel::compute_git_file_row_areas(app, git_area);
+            let (commit_box, commit_submit) = git_panel::compute_git_commit_box_rects(git_area);
+            (tab_hit_areas, file_rows, commit_box, commit_submit)
+        } else {
+            (tab_hit_areas, Vec::new(), Rect::default(), Rect::default())
+        }
+    };
+    // Only the right-hand "esc/q close" label closes the view; the rest of the header row shows
+    // the file path and must not be a close button.
+    let (git_diff_close_hit_area, git_diff_max_scroll) = if let Some(view) = &app.git_diff_view {
+        let label_width = diff_view::CLOSE_LABEL_WIDTH.min(terminal_area.width.saturating_sub(2));
+        let close = Rect::new(
+            terminal_area.x + terminal_area.width.saturating_sub(1 + label_width),
+            terminal_area.y + 1,
+            label_width,
+            1,
+        );
+        // Panel borders take one row top and bottom, and the header takes one more.
+        let body_height = terminal_area.height.saturating_sub(3) as usize;
+        (close, view.row_count.saturating_sub(body_height))
+    } else {
+        (Rect::default(), 0)
+    };
+    if let Some(view) = app.git_diff_view.as_mut() {
+        view.scroll = view.scroll.min(git_diff_max_scroll);
+    }
+
     let tab_bar_view = app
         .active
         .and_then(|ws_idx| app.workspaces.get(ws_idx))
@@ -308,6 +373,12 @@ fn compute_view_internal(
         layout: ViewLayout::Desktop,
         sidebar_rect: sidebar_area,
         workspace_card_areas,
+        sidebar_tab_hit_areas,
+        git_file_row_areas,
+        git_commit_box_rect,
+        git_commit_submit_hit_area,
+        git_diff_close_hit_area,
+        git_diff_max_scroll,
         tab_bar_rect,
         tab_hit_areas: tab_bar_view.tab_hit_areas,
         tab_scroll_left_hit_area: tab_bar_view.scroll_left_hit_area,
@@ -371,6 +442,12 @@ fn compute_mobile_view(
         layout: ViewLayout::Mobile,
         sidebar_rect: Rect::default(),
         workspace_card_areas: Vec::new(),
+        sidebar_tab_hit_areas: Vec::new(),
+        git_file_row_areas: Vec::new(),
+        git_commit_box_rect: Rect::default(),
+        git_commit_submit_hit_area: Rect::default(),
+        git_diff_close_hit_area: Rect::default(),
+        git_diff_max_scroll: 0,
         tab_bar_rect: Rect::default(),
         tab_hit_areas: Vec::new(),
         tab_scroll_left_hit_area: Rect::default(),
@@ -405,7 +482,9 @@ pub fn render_with_runtime_registry(
     if app.view.layout != ViewLayout::Mobile {
         render_tab_bar(app, frame, tab_bar_area);
     }
-    if app
+    if let Some(diff_view_state) = &app.git_diff_view {
+        diff_view::render_diff_view(app, diff_view_state, frame, terminal_area);
+    } else if app
         .active
         .and_then(|ws_idx| app.workspaces.get(ws_idx))
         .is_some()
@@ -457,7 +536,11 @@ pub fn render_with_runtime_registry(
         Mode::GlobalMenu => render_global_launcher_menu(app, frame),
         Mode::KeybindHelp => render_keybind_help_overlay(app, frame),
         Mode::Navigator => render_navigator_overlay(app, terminal_runtimes, frame),
-        Mode::Terminal => {}
+        // The Git panel is drawn unconditionally by `render_sidebar` (like `Mode::Terminal`'s
+        // sidebar); the diff view is drawn earlier as a terminal-area replacement, not an overlay.
+        Mode::GitPicker => render_git_picker_overlay(app, frame, frame.area()),
+        Mode::GitBranchCreate => render_git_branch_create_overlay(app, frame, frame.area()),
+        Mode::Terminal | Mode::SidebarGit | Mode::GitDiff => {}
     }
 }
 

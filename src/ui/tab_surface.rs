@@ -304,7 +304,7 @@ mod tests {
         assert_eq!(frame.hyperlinks, vec![uri.to_owned()]);
         assert_eq!(
             frame_digest(&frame),
-            "a7c21fa42305a41231c7ae254f264f6ef923f46301d8fc4cd35ab6dfdd651b6b"
+            "38d18f6e3fdd32cb4f1668738b89cf9c442bab0ef51001cc6fbc1f20d4a31947"
         );
     }
 

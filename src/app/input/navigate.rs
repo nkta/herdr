@@ -400,6 +400,19 @@ impl App {
             }
             NavigateAction::ToggleSidebar => {
                 self.state.sidebar_collapsed = !self.state.sidebar_collapsed;
+                self.state.release_sidebar_git_focus_if_hidden();
+                leave_navigate_mode(&mut self.state);
+            }
+            NavigateAction::ToggleSidebarGitView => {
+                self.state.sidebar_spaces_view = match self.state.sidebar_spaces_view {
+                    crate::app::state::SidebarSpacesView::Spaces => {
+                        crate::app::state::SidebarSpacesView::Git
+                    }
+                    crate::app::state::SidebarSpacesView::Git => {
+                        crate::app::state::SidebarSpacesView::Spaces
+                    }
+                };
+                self.state.release_sidebar_git_focus_if_hidden();
                 leave_navigate_mode(&mut self.state);
             }
             NavigateAction::CyclePaneNext => {
@@ -1446,6 +1459,7 @@ pub(crate) enum NavigateAction {
     ResizePaneUp,
     ResizePaneRight,
     ToggleSidebar,
+    ToggleSidebarGitView,
     CyclePaneNext,
     CyclePanePrevious,
     LastPane,
@@ -1596,6 +1610,10 @@ fn non_indexed_action_for_key(
         (&kb.resize_pane_up, NavigateAction::ResizePaneUp),
         (&kb.resize_pane_right, NavigateAction::ResizePaneRight),
         (&kb.toggle_sidebar, NavigateAction::ToggleSidebar),
+        (
+            &kb.toggle_sidebar_git_view,
+            NavigateAction::ToggleSidebarGitView,
+        ),
         (&kb.reload_config, NavigateAction::ReloadConfig),
         (
             &kb.open_notification_target,
@@ -1852,6 +1870,19 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::ToggleSidebar => {
             state.sidebar_collapsed = !state.sidebar_collapsed;
+            state.release_sidebar_git_focus_if_hidden();
+            leave_navigate_mode(state);
+        }
+        NavigateAction::ToggleSidebarGitView => {
+            state.sidebar_spaces_view = match state.sidebar_spaces_view {
+                crate::app::state::SidebarSpacesView::Spaces => {
+                    crate::app::state::SidebarSpacesView::Git
+                }
+                crate::app::state::SidebarSpacesView::Git => {
+                    crate::app::state::SidebarSpacesView::Spaces
+                }
+            };
+            state.release_sidebar_git_focus_if_hidden();
             leave_navigate_mode(state);
         }
         NavigateAction::CyclePaneNext => {

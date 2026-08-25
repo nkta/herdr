@@ -4,20 +4,21 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Tabs},
     Frame,
 };
 
 use self::tokens::{ResolvedToken, ResolvedTokenKind, SpaceTokenContext};
+use super::git_panel::render_git_panel;
 use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{state_icon, state_label, state_label_color};
 use super::text::{display_width, display_width_u16, truncate_end};
-use crate::app::state::{AgentPanelSort, Palette};
+use crate::app::state::{AgentPanelSort, Palette, SidebarSpacesView};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 use crate::terminal::TerminalRuntimeRegistry;
 
-const WORKSPACE_SECTION_HEADER_ROWS: u16 = 2;
+pub(crate) const WORKSPACE_SECTION_HEADER_ROWS: u16 = 2;
 const AGENT_PANEL_HEADER_ROWS: u16 = 3;
 
 pub(crate) struct AgentPanelEntry {
@@ -748,7 +749,7 @@ pub(crate) fn collapsed_sidebar_sections(area: Rect) -> (Rect, Option<u16>, Rect
     (ws_area, Some(divider_y), detail_area)
 }
 
-fn workspace_selection_background(p: &Palette, is_active: bool) -> Color {
+pub(super) fn workspace_selection_background(p: &Palette, is_active: bool) -> Color {
     if is_active && p.selection_bg == Color::Reset {
         p.active_row_bg
     } else {
@@ -1206,6 +1207,41 @@ fn apply_token_style(mut style: Style, patch: crate::config::SidebarTokenStyle) 
     style
 }
 
+/// `[ spaces ] [ git ]` tab strip that replaces the old static `" spaces"` header, following the
+/// same `Tabs` widget usage as `render_settings_overlay`'s section tabs.
+fn render_sidebar_tab_strip(app: &AppState, frame: &mut Frame, area: Rect) {
+    if area.width == 0 {
+        return;
+    }
+    let p = &app.palette;
+    let labels = super::git_panel::SIDEBAR_TAB_LABELS;
+    let selected = labels
+        .iter()
+        .position(|(view, _)| *view == app.sidebar_spaces_view)
+        .unwrap_or(0);
+    let tabs = Tabs::new(
+        labels
+            .iter()
+            .map(|(_, label)| Line::from(*label))
+            .collect::<Vec<_>>(),
+    )
+    .select(selected)
+    .style(Style::default().fg(p.overlay0))
+    .highlight_style(
+        // Reversed video instead of an explicit `.bg(accent)`: this cell's background was
+        // already painted `sidebar_bg` by `render_sidebar`'s full-area fill, and a custom
+        // sidebar background must stay uniform (see
+        // `expanded_and_collapsed_sidebars_use_custom_background`) — reversing swaps fg/bg at
+        // render time without ever writing an explicit background into the buffer.
+        Style::default()
+            .fg(p.accent)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+    )
+    .divider(" ")
+    .padding(" ", " ");
+    frame.render_widget(tabs, area);
+}
+
 fn render_workspace_list(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -1214,6 +1250,24 @@ fn render_workspace_list(
     is_navigating: bool,
 ) {
     let p = &app.palette;
+
+    if area.height > 0 {
+        render_sidebar_tab_strip(app, frame, Rect::new(area.x, area.y, area.width, 1));
+    }
+
+    if app.sidebar_spaces_view == SidebarSpacesView::Git {
+        if area.height > WORKSPACE_SECTION_HEADER_ROWS {
+            let git_area = Rect::new(
+                area.x,
+                area.y + WORKSPACE_SECTION_HEADER_ROWS,
+                area.width,
+                area.height - WORKSPACE_SECTION_HEADER_ROWS,
+            );
+            render_git_panel(app, frame, git_area);
+        }
+        return;
+    }
+
     let dragged_ws_idx = match app.drag.as_ref().map(|drag| &drag.target) {
         Some(crate::app::state::DragTarget::WorkspaceReorder { source_ws_idx, .. }) => {
             Some(*source_ws_idx)
@@ -1229,15 +1283,6 @@ fn render_workspace_list(
     };
 
     let list_bottom = area.y + area.height.saturating_sub(1);
-    if area.height > 0 {
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled(
-                " spaces",
-                Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-            )])),
-            Rect::new(area.x, area.y, area.width, 1),
-        );
-    }
 
     let metrics = workspace_list_scroll_metrics(app, area);
     let scrollbar_rect = workspace_list_scrollbar_rect(app, area);
@@ -1606,6 +1651,42 @@ mod tests {
             .collect::<String>()
             .trim_end()
             .to_string()
+    }
+
+    #[test]
+    fn sidebar_tab_strip_renders_both_labels_and_marks_the_active_one() {
+        for (view, active_label, inactive_label) in [
+            (SidebarSpacesView::Spaces, "spaces", "git"),
+            (SidebarSpacesView::Git, "git", "spaces"),
+        ] {
+            let mut app = crate::app::state::AppState::test_new();
+            app.workspaces.clear();
+            app.active = None;
+            app.sidebar_spaces_view = view;
+
+            let area = Rect::new(0, 0, 26, 20);
+            let mut terminal = Terminal::new(TestBackend::new(26, 20)).unwrap();
+            terminal
+                .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+
+            let header = row_text(buffer, 0, 26);
+            assert!(
+                header.contains("spaces") && header.contains("git"),
+                "both tab labels should render for {view:?}: {header:?}"
+            );
+
+            // The active label must be visually distinguishable from the inactive one, not just
+            // differently colored text: assert the styles actually differ.
+            let active_x = header.find(active_label).expect("active label present") as u16;
+            let inactive_x = header.find(inactive_label).expect("inactive label present") as u16;
+            assert_ne!(
+                buffer[(active_x, 0)].style(),
+                buffer[(inactive_x, 0)].style(),
+                "active tab {active_label:?} must be styled differently from inactive {inactive_label:?}"
+            );
+        }
     }
 
     fn find_symbol_x(buffer: &ratatui::buffer::Buffer, row: u16, width: u16, symbol: &str) -> u16 {

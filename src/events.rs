@@ -7,7 +7,15 @@ use std::time::Instant;
 
 use crate::detect::{Agent, AgentState};
 use crate::layout::PaneId;
-use crate::workspace::{GitStatusCacheEntry, WorkspaceGitStatus};
+use crate::workspace::{FileDiff, GitStatusCacheEntry, GitWorkingTreeStatus, WorkspaceGitStatus};
+
+/// One mutating action taken on a single working-tree file from the Git sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitFileAction {
+    Stage,
+    Unstage,
+    Discard,
+}
 
 #[derive(Debug)]
 pub struct ApiWorktreeAddRequest {
@@ -171,4 +179,32 @@ pub enum AppEvent {
     WorktreeAddFinished(Box<WorktreeAddResult>),
     /// Background `git worktree remove` completed.
     WorktreeRemoveFinished(Box<WorktreeRemoveResult>),
+    /// Background Git sidebar working-tree status refresh completed.
+    GitWorkingTreeStatusRefreshed {
+        repo_root: std::path::PathBuf,
+        status: Option<GitWorkingTreeStatus>,
+    },
+    /// Background diff fetch for a selected file completed. `generation` is dropped by the
+    /// handler when it no longer matches the latest fetch (the selection moved on).
+    GitDiffReady {
+        generation: u64,
+        repo_root: std::path::PathBuf,
+        path: String,
+        staged: bool,
+        diff: Option<FileDiff>,
+    },
+    /// Background stage/unstage/discard action for one file completed.
+    GitFileActionFinished {
+        action: GitFileAction,
+        path: String,
+        result: Result<(), String>,
+    },
+    /// Background commit of the staged changes completed.
+    GitCommitFinished { result: Result<(), String> },
+    /// Background listing for the Git picker (stashes or branches) completed.
+    GitPickerEntriesReady {
+        generation: u64,
+        repo_root: std::path::PathBuf,
+        entries: Option<Vec<crate::workspace::GitListEntry>>,
+    },
 }

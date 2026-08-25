@@ -207,6 +207,48 @@ impl App {
             return Vec::new();
         }
 
+        if let AppEvent::GitWorkingTreeStatusRefreshed { repo_root, status } = ev {
+            self.handle_git_working_tree_status_refreshed(repo_root, status);
+            return Vec::new();
+        }
+
+        if let AppEvent::GitDiffReady {
+            generation,
+            repo_root,
+            path,
+            staged,
+            diff,
+        } = ev
+        {
+            self.handle_git_diff_ready(generation, repo_root, path, staged, diff);
+            return Vec::new();
+        }
+
+        if let AppEvent::GitFileActionFinished {
+            action,
+            path,
+            result,
+        } = ev
+        {
+            self.handle_git_file_action_finished(action, path, result);
+            return Vec::new();
+        }
+
+        if let AppEvent::GitCommitFinished { result } = ev {
+            self.handle_git_commit_finished(result);
+            return Vec::new();
+        }
+
+        if let AppEvent::GitPickerEntriesReady {
+            generation,
+            repo_root,
+            entries,
+        } = ev
+        {
+            self.handle_git_picker_entries_ready(generation, repo_root, entries);
+            return Vec::new();
+        }
+
         if let AppEvent::PaneDied { pane_id } = &ev {
             if self
                 .state

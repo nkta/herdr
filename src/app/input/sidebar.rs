@@ -465,6 +465,117 @@ impl AppState {
         })
     }
 
+    /// Hit-test against the precomputed `[ spaces ] [ git ]` tab-strip rects (`ViewState`,
+    /// populated once per frame in `compute_view_internal`) — never recomputed during mouse
+    /// handling, per this codebase's hit-testing convention.
+    pub(super) fn sidebar_tab_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<crate::app::state::SidebarSpacesView> {
+        self.view
+            .sidebar_tab_hit_areas
+            .iter()
+            .find_map(|(view, rect)| {
+                (rect.width > 0
+                    && col >= rect.x
+                    && col < rect.x + rect.width
+                    && row >= rect.y
+                    && row < rect.y + rect.height)
+                    .then_some(*view)
+            })
+    }
+
+    /// The Git sidebar file row (if any) under `(col, row)`, matched against the row's full-width
+    /// `row_rect`; callers further test `col` against `stage_toggle_rect`/`discard_rect` to
+    /// disambiguate an icon click from a plain row click.
+    pub(super) fn git_file_row_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<&crate::app::state::GitFileRowArea> {
+        self.view.git_file_row_areas.iter().find(|area| {
+            let r = area.row_rect;
+            r.width > 0 && col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+        })
+    }
+
+    pub(super) fn git_commit_box_contains(&self, col: u16, row: u16) -> bool {
+        let rect = self.view.git_commit_box_rect;
+        rect.width > 0
+            && col >= rect.x
+            && col < rect.x + rect.width
+            && row >= rect.y
+            && row < rect.y + rect.height
+    }
+
+    pub(super) fn git_commit_submit_contains(&self, col: u16, row: u16) -> bool {
+        let rect = self.view.git_commit_submit_hit_area;
+        rect.width > 0
+            && col >= rect.x
+            && col < rect.x + rect.width
+            && row >= rect.y
+            && row < rect.y + rect.height
+    }
+
+    /// Resolves a click within the Git panel body to the action it should trigger — an icon
+    /// click (stage/unstage/discard), a row click (open diff), or the commit box/submit button.
+    pub(super) fn git_panel_mouse_action(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<super::mouse::MouseAction> {
+        use super::mouse::MouseAction;
+
+        if let Some(row_area) = self.git_file_row_at(col, row) {
+            let in_x_range =
+                |rect: Rect| rect.width > 0 && col >= rect.x && col < rect.x + rect.width;
+
+            if in_x_range(row_area.stage_toggle_rect) {
+                let action = if row_area.staged {
+                    crate::events::GitFileAction::Unstage
+                } else {
+                    crate::events::GitFileAction::Stage
+                };
+                return Some(MouseAction::GitFileAction {
+                    path: row_area.path.clone(),
+                    action,
+                });
+            }
+            if row_area.can_discard && in_x_range(row_area.discard_rect) {
+                return Some(MouseAction::RequestGitDiscard {
+                    path: row_area.path.clone(),
+                });
+            }
+
+            let untracked = self.git_sidebar.status.as_ref().is_some_and(|status| {
+                let entries = if row_area.staged {
+                    &status.staged
+                } else {
+                    &status.unstaged
+                };
+                entries.iter().any(|entry| {
+                    entry.path == row_area.path
+                        && entry.status == crate::workspace::GitFileStatusKind::Untracked
+                })
+            });
+            return Some(MouseAction::OpenGitDiff {
+                path: row_area.path.clone(),
+                staged: row_area.staged,
+                untracked,
+            });
+        }
+
+        if self.git_commit_submit_contains(col, row) {
+            return Some(MouseAction::SubmitGitCommit);
+        }
+        if self.git_commit_box_contains(col, row) {
+            return Some(MouseAction::FocusGitCommitBox);
+        }
+
+        None
+    }
+
     pub(super) fn on_agent_panel_sort_toggle(&self, col: u16, row: u16) -> bool {
         if self.sidebar_collapsed || self.agent_view_override.is_some() {
             return false;
@@ -535,6 +646,238 @@ mod tests {
         detect::{Agent, AgentState},
         workspace::Workspace,
     };
+
+    /// Clicking a Git file row must open its diff even while another diff is already showing —
+    /// an earlier version consumed every click in `Mode::GitDiff`, forcing the user to close the
+    /// panel before picking a different file.
+    #[test]
+    fn git_file_row_click_switches_diff_without_closing_the_open_one() {
+        use crate::app::state::{GitDiffViewState, GitFileRowArea, SidebarSpacesView};
+        use crate::workspace::{GitFileEntry, GitFileStatusKind, GitWorkingTreeStatus};
+
+        let mut app = app_for_mouse_test();
+        let repo_root = std::path::PathBuf::from("/repo");
+        let mut workspace = Workspace::test_new("repo");
+        workspace.cached_git_space = Some(crate::workspace::GitSpaceMetadata {
+            key: "/repo/.git".into(),
+            checkout_key: "/repo".into(),
+            repo_name: "repo".into(),
+            repo_root: repo_root.clone(),
+            is_linked_worktree: false,
+        });
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.sidebar_spaces_view = SidebarSpacesView::Git;
+        app.state.git_sidebar.target_repo_root = Some(repo_root.clone());
+        app.state.git_sidebar.status = Some(GitWorkingTreeStatus {
+            staged: Vec::new(),
+            unstaged: vec![
+                GitFileEntry {
+                    path: "first.rs".into(),
+                    original_path: None,
+                    status: GitFileStatusKind::Modified,
+                },
+                GitFileEntry {
+                    path: "second.rs".into(),
+                    original_path: None,
+                    status: GitFileStatusKind::Modified,
+                },
+            ],
+        });
+
+        // A diff for the first file is already open.
+        app.state.mode = Mode::GitDiff;
+        app.state.git_diff_view = Some(GitDiffViewState {
+            repo_root: repo_root.clone(),
+            path: "first.rs".into(),
+            staged: false,
+            diff: None,
+            scroll: 7,
+            row_count: 0,
+            loading: false,
+        });
+
+        let second_row = Rect::new(0, 9, 26, 1);
+        app.state.view.git_file_row_areas = vec![GitFileRowArea {
+            row_rect: second_row,
+            stage_toggle_rect: Rect::new(20, 9, 3, 1),
+            discard_rect: Rect::new(23, 9, 3, 1),
+            path: "second.rs".into(),
+            staged: false,
+            can_discard: true,
+        }];
+
+        // Click the row body (left of the stage/discard icons) while the first diff is open.
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 4, 9));
+
+        let view = app
+            .state
+            .git_diff_view
+            .as_ref()
+            .expect("diff view should stay open");
+        assert_eq!(view.path, "second.rs", "diff should switch to the new file");
+        assert_eq!(view.scroll, 0, "switching files resets the scroll offset");
+
+        // Opening a diff must leave the keyboard on the file list: staging (`s`/`u`/`d`) is the
+        // usual next step, so focus must not jump into the diff panel.
+        assert_eq!(app.state.mode, Mode::SidebarGit);
+        assert_eq!(
+            app.state.git_sidebar.focus,
+            crate::app::state::GitSidebarFocus::FileList
+        );
+
+        // The selection cursor must follow the click, otherwise the clicked row renders with no
+        // highlight and the user gets no feedback about which file is being shown.
+        assert_eq!(
+            app.state
+                .git_sidebar
+                .selected_row()
+                .map(|(entry, _)| entry.path.as_str()),
+            Some("second.rs"),
+            "clicking a row should move the selection cursor onto it"
+        );
+    }
+
+    /// The staging workflow must be reachable: click a file, then press `s`. Before the file list
+    /// became keyboard-focusable, `Mode::SidebarGit` was only entered by clicking the commit box,
+    /// which made these shortcuts effectively unreachable.
+    #[test]
+    fn clicking_a_file_then_pressing_s_reaches_the_stage_action() {
+        use crate::app::state::{GitFileRowArea, GitSidebarFocus, SidebarSpacesView};
+        use crate::workspace::{GitFileEntry, GitFileStatusKind, GitWorkingTreeStatus};
+        use crossterm::event::{KeyCode, KeyEvent};
+
+        let mut app = app_for_mouse_test();
+        let repo_root = std::path::PathBuf::from("/repo");
+        let mut workspace = Workspace::test_new("repo");
+        workspace.cached_git_space = Some(crate::workspace::GitSpaceMetadata {
+            key: "/repo/.git".into(),
+            checkout_key: "/repo".into(),
+            repo_name: "repo".into(),
+            repo_root: repo_root.clone(),
+            is_linked_worktree: false,
+        });
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.sidebar_spaces_view = SidebarSpacesView::Git;
+        app.state.git_sidebar.target_repo_root = Some(repo_root);
+        app.state.git_sidebar.status = Some(GitWorkingTreeStatus {
+            staged: Vec::new(),
+            unstaged: vec![GitFileEntry {
+                path: "wip.rs".into(),
+                original_path: None,
+                status: GitFileStatusKind::Modified,
+            }],
+        });
+        app.state.view.git_file_row_areas = vec![GitFileRowArea {
+            row_rect: Rect::new(0, 9, 26, 1),
+            stage_toggle_rect: Rect::new(20, 9, 3, 1),
+            discard_rect: Rect::new(23, 9, 3, 1),
+            path: "wip.rs".into(),
+            staged: false,
+            can_discard: true,
+        }];
+
+        // Click the row body, not the action buttons.
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 4, 9));
+        assert_eq!(app.state.mode, Mode::SidebarGit);
+        assert_eq!(app.state.git_sidebar.focus, GitSidebarFocus::FileList);
+
+        // `s` must now be routed to the file list's stage action rather than the terminal. The
+        // action itself shells out to git on a background thread, so this asserts the key is
+        // consumed by the Git panel and the selection it would act on is the clicked file.
+        app.handle_sidebar_git_key(KeyEvent::from(KeyCode::Char('s')));
+        assert_eq!(
+            app.state
+                .git_sidebar
+                .selected_row()
+                .map(|(entry, staged)| (entry.path.clone(), staged)),
+            Some(("wip.rs".to_string(), false)),
+            "the stage action targets the clicked file"
+        );
+        assert_eq!(app.state.mode, Mode::SidebarGit, "focus stays on the panel");
+    }
+
+    /// Right-clicking the Git panel opens per-file or repository menus, mirroring how the spaces
+    /// list already exposes workspace actions.
+    #[test]
+    fn right_click_in_git_panel_opens_file_or_repo_menu() {
+        use crate::app::state::{ContextMenuKind, GitFileRowArea, SidebarSpacesView};
+        use crate::workspace::{GitFileEntry, GitFileStatusKind, GitWorkingTreeStatus};
+
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_spaces_view = SidebarSpacesView::Git;
+        app.state.git_sidebar.status = Some(GitWorkingTreeStatus {
+            staged: Vec::new(),
+            unstaged: vec![
+                GitFileEntry {
+                    path: "tracked.rs".into(),
+                    original_path: None,
+                    status: GitFileStatusKind::Modified,
+                },
+                GitFileEntry {
+                    path: "brand_new.rs".into(),
+                    original_path: None,
+                    status: GitFileStatusKind::Untracked,
+                },
+            ],
+        });
+        let row = |y: u16, path: &str| GitFileRowArea {
+            row_rect: Rect::new(0, y, 26, 1),
+            stage_toggle_rect: Rect::new(20, y, 3, 1),
+            discard_rect: Rect::new(23, y, 3, 1),
+            path: path.into(),
+            staged: false,
+            can_discard: true,
+        };
+        app.state.view.git_file_row_areas = vec![row(9, "tracked.rs"), row(10, "brand_new.rs")];
+
+        // Right-click on a tracked file row.
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 4, 9));
+        let menu = app.state.context_menu.as_ref().expect("menu should open");
+        assert_eq!(
+            menu.kind,
+            ContextMenuKind::GitFile {
+                path: "tracked.rs".into(),
+                staged: false,
+                untracked: false,
+            }
+        );
+        assert!(menu.items().contains(&"Discard changes..."));
+        assert_eq!(
+            app.state
+                .git_sidebar
+                .selected_row()
+                .map(|(entry, _)| entry.path.clone()),
+            Some("tracked.rs".to_string()),
+            "right-click should also move the selection onto the row"
+        );
+
+        // Untracked files must not offer discard: `git restore` cannot remove them, so the item
+        // would only ever error out.
+        app.state.context_menu = None;
+        app.state.mode = Mode::Terminal;
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 4, 10));
+        let menu = app.state.context_menu.as_ref().expect("menu should open");
+        assert!(matches!(
+            menu.kind,
+            ContextMenuKind::GitFile {
+                untracked: true,
+                ..
+            }
+        ));
+        assert!(!menu.items().contains(&"Discard changes..."));
+
+        // Right-clicking away from any row exposes the repository-wide operations.
+        app.state.context_menu = None;
+        app.state.mode = Mode::Terminal;
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 4, 2));
+        let menu = app.state.context_menu.as_ref().expect("menu should open");
+        assert_eq!(menu.kind, ContextMenuKind::GitRepo);
+        for expected in ["Fetch", "Pull", "Push", "View log"] {
+            assert!(menu.items().contains(&expected), "missing {expected:?}");
+        }
+    }
 
     #[test]
     fn clicking_launcher_opens_global_menu() {

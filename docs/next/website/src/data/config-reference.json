@@ -824,6 +824,12 @@
           "description": "Toggle sidebar collapse."
         },
         {
+          "key": "keys.toggle_sidebar_git_view",
+          "type": "keybinding",
+          "default": "\"prefix+t\"",
+          "description": "Toggle the sidebar's SPACES/GIT view."
+        },
+        {
           "key": "keys.indexed.tabs",
           "type": "string",
           "default": "unset",

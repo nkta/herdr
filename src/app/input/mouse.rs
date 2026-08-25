@@ -6,9 +6,10 @@ use tracing::warn;
 use crate::{
     app::state::{
         AgentPanelSort, AppState, ContextMenuKind, ContextMenuState, DragState, DragTarget,
-        MenuListState, Mode, RightClickPassthroughGesture, TabPressState, ViewLayout,
-        WorkspacePressState,
+        MenuListState, Mode, RightClickPassthroughGesture, SidebarSpacesView, TabPressState,
+        ViewLayout, WorkspacePressState,
     },
+    events::GitFileAction,
     layout::{PaneInfo, SplitBorder},
     selection::Selection,
     terminal::TerminalRuntimeRegistry,
@@ -61,6 +62,21 @@ pub(super) enum MouseAction {
         menu: ContextMenuState,
         idx: usize,
     },
+    FocusGitCommitBox,
+    CloseGitDiff,
+    OpenGitDiff {
+        path: String,
+        staged: bool,
+        untracked: bool,
+    },
+    GitFileAction {
+        path: String,
+        action: GitFileAction,
+    },
+    RequestGitDiscard {
+        path: String,
+    },
+    SubmitGitCommit,
 }
 
 enum MobileMouseResult {
@@ -125,6 +141,53 @@ impl AppState {
 
         if self.mode == Mode::Settings {
             return self.handle_settings_mouse(mouse).map(MouseAction::Settings);
+        }
+
+        // Gate on the diff being displayed rather than on `Mode::GitDiff`: the diff stays visible
+        // while keyboard focus is on the Git file list, and its scrollwheel/close targets must
+        // keep working in that state too.
+        if self.git_diff_view.is_some() {
+            // Only consume events that land on the diff panel itself. Clicks outside it (notably
+            // the Git sidebar) must fall through, so another file's diff can be opened directly
+            // without closing the current one first.
+            let diff_area = self.view.terminal_area;
+            let in_diff_area = diff_area.width > 0
+                && mouse.column >= diff_area.x
+                && mouse.column < diff_area.x + diff_area.width
+                && mouse.row >= diff_area.y
+                && mouse.row < diff_area.y + diff_area.height;
+
+            if in_diff_area {
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        let close = self.view.git_diff_close_hit_area;
+                        if close.width > 0
+                            && mouse.column >= close.x
+                            && mouse.column < close.x + close.width
+                            && mouse.row >= close.y
+                            && mouse.row < close.y + close.height
+                        {
+                            return Some(MouseAction::CloseGitDiff);
+                        }
+                        // Clicking the diff body hands it the keyboard, so scroll keys apply here
+                        // instead of moving the file-list selection.
+                        self.mode = Mode::GitDiff;
+                    }
+                    MouseEventKind::ScrollDown => {
+                        let max_scroll = self.view.git_diff_max_scroll;
+                        if let Some(view) = self.git_diff_view.as_mut() {
+                            view.scroll = view.scroll.saturating_add(3).min(max_scroll);
+                        }
+                    }
+                    MouseEventKind::ScrollUp => {
+                        if let Some(view) = self.git_diff_view.as_mut() {
+                            view.scroll = view.scroll.saturating_sub(3);
+                        }
+                    }
+                    _ => {}
+                }
+                return None;
+            }
         }
 
         let launcher_enabled = self.view.layout != ViewLayout::Mobile
@@ -218,6 +281,23 @@ impl AppState {
             Mode::NewLinkedWorktree | Mode::OpenExistingWorktree | Mode::ConfirmRemoveWorktree
         ) && !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
         {
+            return None;
+        }
+
+        // The Git picker and branch prompt are drawn over the whole frame. Without swallowing
+        // mouse input here, clicks pass through to the sidebar and tab bar underneath, switching
+        // workspace or tab while the modal stays open on top of a view that changed.
+        if matches!(self.mode, Mode::GitPicker | Mode::GitBranchCreate) {
+            if let MouseEventKind::ScrollUp | MouseEventKind::ScrollDown = mouse.kind {
+                if let Some(picker) = self.git_picker.as_mut() {
+                    let count = picker.entries.len();
+                    if matches!(mouse.kind, MouseEventKind::ScrollDown) {
+                        picker.selected.move_next(count);
+                    } else {
+                        picker.selected.move_prev();
+                    }
+                }
+            }
             return None;
         }
 
@@ -523,6 +603,7 @@ impl AppState {
                 if in_sidebar {
                     if self.on_sidebar_toggle(mouse.column, mouse.row) {
                         self.sidebar_collapsed = !self.sidebar_collapsed;
+                        self.release_sidebar_git_focus_if_hidden();
                         return None;
                     }
 
@@ -541,63 +622,78 @@ impl AppState {
                         return None;
                     }
 
-                    let new_button = self.sidebar_new_button_rect();
-                    let on_new_button = mouse.row >= new_button.y
-                        && mouse.row < new_button.y + new_button.height
-                        && mouse.column >= new_button.x
-                        && mouse.column < new_button.x + new_button.width;
-                    if on_new_button {
-                        return Some(MouseAction::NewWorkspace);
-                    }
-
-                    if let Some(target) =
-                        self.workspace_list_scrollbar_target_at(mouse.column, mouse.row)
-                    {
-                        match target {
-                            ScrollbarClickTarget::Thumb { grab_row_offset } => {
-                                self.drag = Some(DragState {
-                                    target: DragTarget::WorkspaceListScrollbar { grab_row_offset },
-                                });
-                            }
-                            ScrollbarClickTarget::Track { offset_from_bottom } => {
-                                self.set_workspace_list_offset_from_bottom(offset_from_bottom);
-                            }
-                        }
+                    if let Some(view) = self.sidebar_tab_at(mouse.column, mouse.row) {
+                        self.sidebar_spaces_view = view;
+                        self.release_sidebar_git_focus_if_hidden();
+                        self.mark_session_dirty();
                         return None;
                     }
 
-                    let cards = if self.view.workspace_card_areas.is_empty() {
-                        crate::ui::compute_workspace_card_areas(self, self.view.sidebar_rect)
-                    } else {
-                        self.view.workspace_card_areas.clone()
-                    };
-                    if let Some(card) = cards.iter().find(|card| {
-                        let chevron = crate::ui::workspace_group_chevron_rect(card);
-                        mouse.row == chevron.y && mouse.column == chevron.x && chevron.width > 0
-                    }) {
-                        if let Some((key, collapsed)) =
-                            crate::ui::workspace_parent_group_state(self, card.ws_idx)
+                    if self.sidebar_spaces_view == SidebarSpacesView::Spaces {
+                        let new_button = self.sidebar_new_button_rect();
+                        let on_new_button = mouse.row >= new_button.y
+                            && mouse.row < new_button.y + new_button.height
+                            && mouse.column >= new_button.x
+                            && mouse.column < new_button.x + new_button.width;
+                        if on_new_button {
+                            return Some(MouseAction::NewWorkspace);
+                        }
+
+                        if let Some(target) =
+                            self.workspace_list_scrollbar_target_at(mouse.column, mouse.row)
                         {
-                            if collapsed {
-                                self.collapsed_space_keys.remove(&key);
-                            } else {
-                                self.collapsed_space_keys.insert(key);
+                            match target {
+                                ScrollbarClickTarget::Thumb { grab_row_offset } => {
+                                    self.drag = Some(DragState {
+                                        target: DragTarget::WorkspaceListScrollbar {
+                                            grab_row_offset,
+                                        },
+                                    });
+                                }
+                                ScrollbarClickTarget::Track { offset_from_bottom } => {
+                                    self.set_workspace_list_offset_from_bottom(offset_from_bottom);
+                                }
                             }
-                            self.mark_session_dirty();
                             return None;
                         }
-                    }
 
-                    if let Some(idx) = self.workspace_at_row(mouse.row) {
-                        self.workspace_presses.insert(
-                            source_id,
-                            WorkspacePressState {
-                                ws_idx: idx,
-                                start_col: mouse.column,
-                                start_row: mouse.row,
-                            },
-                        );
-                        return None;
+                        let cards = if self.view.workspace_card_areas.is_empty() {
+                            crate::ui::compute_workspace_card_areas(self, self.view.sidebar_rect)
+                        } else {
+                            self.view.workspace_card_areas.clone()
+                        };
+                        if let Some(card) = cards.iter().find(|card| {
+                            let chevron = crate::ui::workspace_group_chevron_rect(card);
+                            mouse.row == chevron.y && mouse.column == chevron.x && chevron.width > 0
+                        }) {
+                            if let Some((key, collapsed)) =
+                                crate::ui::workspace_parent_group_state(self, card.ws_idx)
+                            {
+                                if collapsed {
+                                    self.collapsed_space_keys.remove(&key);
+                                } else {
+                                    self.collapsed_space_keys.insert(key);
+                                }
+                                self.mark_session_dirty();
+                                return None;
+                            }
+                        }
+
+                        if let Some(idx) = self.workspace_at_row(mouse.row) {
+                            self.workspace_presses.insert(
+                                source_id,
+                                WorkspacePressState {
+                                    ws_idx: idx,
+                                    start_col: mouse.column,
+                                    start_row: mouse.row,
+                                },
+                            );
+                            return None;
+                        }
+                    } else if let Some(action) =
+                        self.git_panel_mouse_action(mouse.column, mouse.row)
+                    {
+                        return Some(action);
                     }
 
                     if self.on_agent_panel_sort_toggle(mouse.column, mouse.row) {
@@ -983,6 +1079,19 @@ impl AppState {
                 }
             }
 
+            MouseEventKind::ScrollUp
+                if in_sidebar && self.sidebar_spaces_view == SidebarSpacesView::Git =>
+            {
+                self.git_sidebar.scroll = self.git_sidebar.scroll.saturating_sub(3);
+            }
+
+            MouseEventKind::ScrollDown
+                if in_sidebar && self.sidebar_spaces_view == SidebarSpacesView::Git =>
+            {
+                // The upper bound is applied by `compute_view` against the panel height.
+                self.git_sidebar.scroll = self.git_sidebar.scroll.saturating_add(3);
+            }
+
             MouseEventKind::ScrollUp if in_sidebar => {
                 let agent_area = self.agent_panel_rect();
                 let over_agent_panel = agent_area != Rect::default()
@@ -1037,6 +1146,62 @@ impl AppState {
 
             MouseEventKind::Down(MouseButton::Right) if in_sidebar && !self.sidebar_collapsed => {
                 self.clear_chrome_press(source_id);
+
+                // The Git tab has its own menus: per-file actions on a file row, repository-wide
+                // operations anywhere else in the panel.
+                if self.sidebar_spaces_view == SidebarSpacesView::Git {
+                    let kind = self
+                        .git_file_row_at(mouse.column, mouse.row)
+                        .map(|row| {
+                            let untracked =
+                                self.git_sidebar.status.as_ref().is_some_and(|status| {
+                                    let entries = if row.staged {
+                                        &status.staged
+                                    } else {
+                                        &status.unstaged
+                                    };
+                                    entries.iter().any(|entry| {
+                                        entry.path == row.path
+                                            && entry.status
+                                                == crate::workspace::GitFileStatusKind::Untracked
+                                    })
+                                });
+                            ContextMenuKind::GitFile {
+                                path: row.path.clone(),
+                                staged: row.staged,
+                                untracked,
+                            }
+                        })
+                        .unwrap_or(ContextMenuKind::GitRepo);
+
+                    if let ContextMenuKind::GitFile {
+                        ref path, staged, ..
+                    } = kind
+                    {
+                        // Right-click also moves the selection, so the menu visibly applies to the
+                        // row under the cursor.
+                        if let Some(index) =
+                            self.git_sidebar
+                                .rows()
+                                .iter()
+                                .position(|(entry, row_staged)| {
+                                    entry.path == *path && *row_staged == staged
+                                })
+                        {
+                            self.git_sidebar.selected.select(index);
+                        }
+                    }
+
+                    self.context_menu = Some(ContextMenuState {
+                        kind,
+                        x: mouse.column,
+                        y: mouse.row,
+                        list: MenuListState::new(0),
+                    });
+                    self.mode = Mode::ContextMenu;
+                    return None;
+                }
+
                 if self
                     .workspace_list_scrollbar_target_at(mouse.column, mouse.row)
                     .is_some()

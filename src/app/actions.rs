@@ -2949,6 +2949,11 @@ impl AppState {
             AppEvent::WorktreeRemoveFinished(_) => Vec::new(),
             AppEvent::TabBarCommandFinished { .. } => Vec::new(),
             AppEvent::PluginCommandFinished { .. } => Vec::new(),
+            AppEvent::GitWorkingTreeStatusRefreshed { .. } => Vec::new(),
+            AppEvent::GitDiffReady { .. } => Vec::new(),
+            AppEvent::GitFileActionFinished { .. } => Vec::new(),
+            AppEvent::GitCommitFinished { .. } => Vec::new(),
+            AppEvent::GitPickerEntriesReady { .. } => Vec::new(),
         }
     }
 

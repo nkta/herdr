@@ -716,6 +716,20 @@ pub struct WorkspaceCardArea {
     pub indented: bool,
 }
 
+/// Hit-test regions for one row in the Git sidebar's staged/unstaged file lists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitFileRowArea {
+    pub row_rect: Rect,
+    pub stage_toggle_rect: Rect,
+    pub discard_rect: Rect,
+    pub path: String,
+    pub staged: bool,
+    /// Whether `git restore` can actually revert this row. False for staged entries (they must be
+    /// unstaged first) and for untracked files, which `git restore` cannot remove — offering the
+    /// action there would only produce an error.
+    pub can_discard: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeCreateState {
     pub source_workspace_id: String,
@@ -871,6 +885,14 @@ pub struct ViewState {
     pub layout: ViewLayout,
     pub sidebar_rect: Rect,
     pub workspace_card_areas: Vec<WorkspaceCardArea>,
+    pub sidebar_tab_hit_areas: Vec<(SidebarSpacesView, Rect)>,
+    pub git_file_row_areas: Vec<GitFileRowArea>,
+    pub git_commit_box_rect: Rect,
+    pub git_commit_submit_hit_area: Rect,
+    pub git_diff_close_hit_area: Rect,
+    /// Largest valid `git_diff_view.scroll`, derived from the rendered row count and the panel
+    /// height. The input layer has no view geometry of its own, so it clamps against this.
+    pub git_diff_max_scroll: usize,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -906,6 +928,14 @@ pub enum Mode {
     GlobalMenu,
     KeybindHelp,
     Navigator,
+    /// Focus is on the sidebar Git panel (file list or commit message text entry).
+    SidebarGit,
+    /// The side-by-side diff view is showing in place of the terminal area.
+    GitDiff,
+    /// Modal list picker for choosing a stash or branch.
+    GitPicker,
+    /// Modal text input for naming a new branch.
+    GitBranchCreate,
 }
 
 impl Mode {
@@ -923,6 +953,11 @@ impl Mode {
     /// Known limitation: the search boxes in `Navigator` and `KeybindHelp` are also held on ASCII,
     /// since this `Mode`-level predicate can't see `search_focused` (non-ASCII filtering there
     /// would need a runtime check).
+    ///
+    /// `SidebarGit` is deliberately absent for the mirror-image reason: it hosts the commit
+    /// message box, so listing it would force ASCII on a free-text field and break CJK commit
+    /// messages. The cost is that the file list's letter shortcuts (`j`/`k`/`s`/`u`/`d`) are
+    /// consumed by IME composition while one is active; the arrow keys and `Enter` still work.
     pub(crate) fn wants_ascii_input(self) -> bool {
         matches!(
             self,
@@ -936,6 +971,8 @@ impl Mode {
                 | Mode::ContextMenu
                 | Mode::GlobalMenu
                 | Mode::KeybindHelp
+                | Mode::GitDiff
+                | Mode::GitPicker
         )
     }
 }
@@ -1076,6 +1113,14 @@ pub enum AgentPanelSort {
     Priority,
 }
 
+/// Which tab is active in the sidebar's top section: the workspace list, or the Git panel.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SidebarSpacesView {
+    #[default]
+    Spaces,
+    Git,
+}
+
 // ---------------------------------------------------------------------------
 // Settings UI state
 // ---------------------------------------------------------------------------
@@ -1143,7 +1188,7 @@ impl MenuListState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SelectionListState {
     pub selected: usize,
 }
@@ -1187,6 +1232,136 @@ pub struct SettingsState {
     pub original_palette: Option<Palette>,
     /// The theme name before opening settings.
     pub original_theme: Option<String>,
+}
+
+/// Which part of the Git sidebar has keyboard focus while `Mode::SidebarGit` is active.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GitSidebarFocus {
+    #[default]
+    FileList,
+    CommitBox,
+}
+
+/// State for the sidebar's Git panel: working-tree status for the active workspace's repo, the
+/// file-list selection cursor, and an in-progress commit message draft. Branch name and
+/// ahead/behind counts are intentionally not duplicated here — the panel reads those from the
+/// active `Workspace`'s already-cached `branch()`/`git_ahead_behind()`.
+#[derive(Debug, Clone, Default)]
+pub struct GitSidebarState {
+    pub target_repo_root: Option<std::path::PathBuf>,
+    pub status: Option<crate::workspace::GitWorkingTreeStatus>,
+    pub selected: SelectionListState,
+    /// First row index rendered in the file list. Without it, files past the panel's bottom edge
+    /// are neither visible nor clickable.
+    pub scroll: usize,
+    pub focus: GitSidebarFocus,
+    pub commit_message: String,
+    pub commit_in_flight: bool,
+    /// Path awaiting an explicit second keystroke/click to confirm `git restore`.
+    pub pending_discard: Option<String>,
+    pub last_error: Option<String>,
+}
+
+impl AppState {
+    /// Hands the keyboard back when the Git panel stops being visible.
+    ///
+    /// `Mode::SidebarGit` routes every keystroke into the panel; leaving it active once the panel
+    /// is hidden makes the app look frozen (keys land in an invisible commit box) and, worse, lets
+    /// `s`/`d` act on a file the user can no longer see.
+    pub(crate) fn release_sidebar_git_focus_if_hidden(&mut self) {
+        let panel_visible =
+            self.sidebar_spaces_view == SidebarSpacesView::Git && !self.sidebar_collapsed;
+        if panel_visible || self.mode != Mode::SidebarGit {
+            return;
+        }
+        self.git_sidebar.pending_discard = None;
+        self.mode = if self.active.is_some() {
+            Mode::Terminal
+        } else {
+            Mode::Navigate
+        };
+    }
+}
+
+impl GitSidebarState {
+    /// Flattened row list in the sidebar's visual order: staged entries first (`STAGED CHANGES`),
+    /// then unstaged/untracked entries (`CHANGES`). Shared by input hit-testing and rendering so
+    /// both agree on row order without recomputing it twice.
+    pub fn rows(&self) -> Vec<(&crate::workspace::GitFileEntry, bool)> {
+        let Some(status) = self.status.as_ref() else {
+            return Vec::new();
+        };
+        status
+            .staged
+            .iter()
+            .map(|entry| (entry, true))
+            .chain(status.unstaged.iter().map(|entry| (entry, false)))
+            .collect()
+    }
+
+    pub fn selected_row(&self) -> Option<(&crate::workspace::GitFileEntry, bool)> {
+        self.rows().into_iter().nth(self.selected.selected)
+    }
+}
+
+/// Which git object the picker is choosing, and therefore what confirming it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitPickerKind {
+    ApplyStash,
+    SwitchBranch,
+    DeleteBranch,
+}
+
+impl GitPickerKind {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::ApplyStash => "apply stash",
+            Self::SwitchBranch => "switch branch",
+            Self::DeleteBranch => "delete branch",
+        }
+    }
+
+    pub fn empty_message(self) -> &'static str {
+        match self {
+            Self::ApplyStash => "no stashes",
+            Self::SwitchBranch | Self::DeleteBranch => "no branches",
+        }
+    }
+}
+
+/// Modal list picker used by the Git panel for choosing a stash or a branch.
+#[derive(Debug, Clone)]
+pub struct GitPickerState {
+    pub kind: GitPickerKind,
+    /// Identifies this picker instance, so a listing from a superseded picker (a different kind,
+    /// or a reopen of the same kind) is rejected instead of filling the wrong list.
+    pub generation: u64,
+    pub repo_root: std::path::PathBuf,
+    pub entries: Vec<crate::workspace::GitListEntry>,
+    pub selected: SelectionListState,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+impl GitPickerState {
+    pub fn selected_entry(&self) -> Option<&crate::workspace::GitListEntry> {
+        self.entries.get(self.selected.selected)
+    }
+}
+
+/// State for the side-by-side diff view that replaces the terminal area while open.
+#[derive(Debug, Clone)]
+pub struct GitDiffViewState {
+    pub repo_root: std::path::PathBuf,
+    pub path: String,
+    /// Whether the diff was fetched against the index (`--cached`) or the worktree.
+    pub staged: bool,
+    pub diff: Option<crate::workspace::FileDiff>,
+    pub scroll: usize,
+    /// Number of side-by-side rows the diff renders to, computed once on arrival so neither the
+    /// scroll clamp nor the render path has to rebuild the rows to find out.
+    pub row_count: usize,
+    pub loading: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1277,6 +1452,14 @@ pub enum ContextMenuKind {
         has_manual_label: bool,
         right_click_passthrough: bool,
     },
+    /// Right-click on a file row in the sidebar's Git panel.
+    GitFile {
+        path: String,
+        staged: bool,
+        untracked: bool,
+    },
+    /// Right-click elsewhere in the Git panel: repository-wide operations.
+    GitRepo,
 }
 
 /// Right-click context menu state.
@@ -1335,6 +1518,33 @@ impl ContextMenuState {
                 items.push("Close pane");
                 items
             }
+            ContextMenuKind::GitFile {
+                staged, untracked, ..
+            } => {
+                let mut items = vec!["Open diff"];
+                if staged {
+                    items.push("Unstage");
+                } else {
+                    items.push("Stage");
+                    // `git restore` does not remove untracked files, so offering "Discard" there
+                    // would either error out or imply a deletion the user did not ask for.
+                    if !untracked {
+                        items.push("Discard changes...");
+                    }
+                }
+                items
+            }
+            ContextMenuKind::GitRepo => vec![
+                "Fetch",
+                "Pull",
+                "Push",
+                "New branch...",
+                "Switch branch...",
+                "Delete branch...",
+                "Stash changes",
+                "Apply stash...",
+                "View log",
+            ],
         }
     }
 }
@@ -1532,6 +1742,11 @@ pub struct AppState {
     pub agent_view_override: Option<crate::api::schema::AgentViewSetParams>,
     pub sidebar_agents: crate::config::AgentsSidebarConfig,
     pub sidebar_spaces: crate::config::SpacesSidebarConfig,
+    /// Which tab is active in the sidebar's top section (SPACES vs GIT).
+    pub sidebar_spaces_view: SidebarSpacesView,
+    pub git_sidebar: GitSidebarState,
+    pub git_diff_view: Option<GitDiffViewState>,
+    pub git_picker: Option<GitPickerState>,
     pub next_agent_state_change_seq: u64,
     /// Capture mouse input for Herdr's own mouse UI. When false, Herdr only
     /// captures mouse while the focused pane app requests mouse reporting.
@@ -1877,6 +2092,12 @@ impl AppState {
                 layout: ViewLayout::Desktop,
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                sidebar_tab_hit_areas: Vec::new(),
+                git_file_row_areas: Vec::new(),
+                git_commit_box_rect: Rect::default(),
+                git_commit_submit_hit_area: Rect::default(),
+                git_diff_close_hit_area: Rect::default(),
+                git_diff_max_scroll: 0,
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
@@ -1925,6 +2146,10 @@ impl AppState {
             agent_view_override: None,
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),
+            sidebar_spaces_view: SidebarSpacesView::Spaces,
+            git_sidebar: GitSidebarState::default(),
+            git_diff_view: None,
+            git_picker: None,
             next_agent_state_change_seq: 0,
             mouse_capture: true,
             copy_on_select: true,
@@ -2328,6 +2553,9 @@ impl AppState {
                         assert_live_pane(source_pane_id, "context menu source pane");
                     }
                 }
+                // Git menus are keyed by file path and the panel's own repository rather than by
+                // workspace/tab/pane indices, so they carry no identity to validate here.
+                ContextMenuKind::GitFile { .. } | ContextMenuKind::GitRepo => {}
             }
         }
     }

@@ -1197,6 +1197,19 @@ impl App {
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
         let item = menu.items().get(idx).copied();
         match (menu.kind, item) {
+            (
+                ContextMenuKind::GitFile {
+                    path,
+                    staged,
+                    untracked,
+                },
+                Some(action),
+            ) => {
+                self.apply_git_file_menu_action(path, staged, untracked, action);
+            }
+            (ContextMenuKind::GitRepo, Some(action)) => {
+                self.apply_git_repo_menu_action(action);
+            }
             (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("New worktree")) => {
                 self.state.request_new_linked_worktree = Some(ws_idx);
                 leave_modal(&mut self.state);
