@@ -3,7 +3,6 @@
 ## Unreleased
 
 ### Added
-- The desktop sidebar now has a `git` tab alongside `spaces`, showing the active Space's branch, staged and unstaged files, and a multi-line commit box. Files can be staged, unstaged, discarded, and opened in a side-by-side diff, and a right-click menu runs fetch, pull, push, branch create/switch/delete, stash, and log in a terminal popup. Toggle the tab with `keys.toggle_sidebar_git_view` (default `prefix+t`).
 - Custom themes can now define separate light and dark color overrides when automatic theme switching is enabled. (#837, thanks @aneym)
 
 ### Fixed
