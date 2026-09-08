@@ -7,6 +7,17 @@ name: Fork Build
 # herdrdev/herdr. This one fires on every master push, builds the two Linux
 # targets this fork actually runs on, and publishes them under a dated tag that
 # `herdr-selfupdate --from-release` downloads.
+#
+# It also publishes a preview manifest to the `updates` branch, so an installed
+# binary can find these builds by itself:
+#
+#   https://raw.githubusercontent.com/<owner>/herdr/updates/preview.json
+#
+# Point Herdr at it with `[update] preview_manifest_url` (or
+# HERDR_PREVIEW_MANIFEST_URL) plus `herdr channel set preview`, and the running
+# app surfaces fork builds the same way it surfaces upstream releases.
+# Builds are stamped HERDR_BUILD_CHANNEL=preview so Herdr compares build ids
+# instead of the semver version, which never moves between fork builds.
 
 on:
   push:
@@ -32,6 +43,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      build_id: ${{ steps.plan.outputs.build_id }}
+      commit: ${{ steps.plan.outputs.commit }}
+      built_at: ${{ steps.plan.outputs.built_at }}
+      base_version: ${{ steps.plan.outputs.base_version }}
+      protocol: ${{ steps.plan.outputs.protocol }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      # Identity is decided once, before the build, because the build id is
+      # compiled into the binary and has to match the published manifest.
+      - name: Plan build identity
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          base_version="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          protocol="$(sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9]*\);.*/\1/p' src/protocol/wire.rs | head -1)"
+          [ -n "$protocol" ] || { echo "could not read PROTOCOL_VERSION" >&2; exit 1; }
+
+          {
+            echo "tag=fork-$(date -u +%Y%m%d-%H%M)-$(git rev-parse --short HEAD)"
+            echo "build_id=$(date -u +%Y-%m-%d)-$(git rev-parse --short=12 HEAD)"
+            echo "commit=$commit"
+            echo "built_at=$built_at"
+            echo "base_version=$base_version"
+            echo "protocol=$protocol"
+          } >> "$GITHUB_OUTPUT"
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -70,7 +117,7 @@ jobs:
         run: cargo nextest run --locked
 
   build:
-    needs: test
+    needs: [meta, test]
     permissions:
       contents: read
     strategy:
@@ -86,6 +133,9 @@ jobs:
     env:
       LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
       LIBGHOSTTY_VT_SIMD: 'true'
+      HERDR_BUILD_CHANNEL: preview
+      HERDR_BUILD_ID: ${{ needs.meta.outputs.build_id }}
+      HERDR_BUILD_COMMIT: ${{ needs.meta.outputs.commit }}
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -132,7 +182,7 @@ jobs:
           path: ${{ matrix.name }}
 
   publish:
-    needs: build
+    needs: [meta, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -147,27 +197,32 @@ jobs:
           path: artifacts
 
       - name: Assemble release
-        id: assemble
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+          BUILD_ID: ${{ needs.meta.outputs.build_id }}
         run: |
+          set -euo pipefail
           mkdir -p release
           cp artifacts/herdr-linux-x86_64/herdr-linux-x86_64 release/
           cp artifacts/herdr-linux-aarch64/herdr-linux-aarch64 release/
           chmod 755 release/*
 
-          tag="fork-$(date -u +%Y%m%d-%H%M)-$(git rev-parse --short HEAD)"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
           # The installer reads these digests to verify what it downloaded.
           (cd release && sha256sum herdr-linux-* > SHA256SUMS)
 
           {
-            echo "Fork build of \`$(git rev-parse --short HEAD)\` on $(date -u '+%Y-%m-%d %H:%M UTC')."
+            echo "Fork build \`$(git rev-parse --short HEAD)\` on $(date -u '+%Y-%m-%d %H:%M UTC')."
             echo
             echo "Upstream base: \`$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')\`"
+            echo "Build id: \`$BUILD_ID\`"
             echo
             echo '### Install'
             echo
+            echo 'Installed Herdr on the preview channel picks this up on its own.'
+            echo 'Otherwise:'
+            echo
             echo '```bash'
+            echo 'herdr update            # preview channel pointed at this fork'
             echo 'herdr-selfupdate --from-release'
             echo '```'
             echo
@@ -178,13 +233,118 @@ jobs:
             echo '```'
           } > RELEASE_BODY.md
 
+      # The manifest is what an installed binary polls. Only the two Linux
+      # assets this fork actually builds are listed: an entry for a platform
+      # with no published binary would send that machine to a 404.
+      - name: Build preview manifest
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          BUILD_ID: ${{ needs.meta.outputs.build_id }}
+          COMMIT: ${{ needs.meta.outputs.commit }}
+          BUILT_AT: ${{ needs.meta.outputs.built_at }}
+          BASE_VERSION: ${{ needs.meta.outputs.base_version }}
+          PROTOCOL: ${{ needs.meta.outputs.protocol }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          env = os.environ
+          repo, tag = env["REPO"], env["TAG"]
+          base = f"https://github.com/{repo}/releases/download/{tag}"
+
+          digests = {}
+          for line in pathlib.Path("release/SHA256SUMS").read_text().splitlines():
+              digest, _, name = line.partition(" ")
+              digests[name.strip().lstrip("*")] = digest.strip()
+
+          assets = {}
+          for target, name in (
+              ("linux-x86_64", "herdr-linux-x86_64"),
+              ("linux-aarch64", "herdr-linux-aarch64"),
+          ):
+              digest = digests.get(name)
+              if not digest:
+                  raise SystemExit(f"missing SHA-256 for {name}")
+              assets[target] = {"url": f"{base}/{name}", "sha256": digest}
+
+          manifest = {
+              "schema_version": 1,
+              "channel": "preview",
+              "base_version": env["BASE_VERSION"],
+              "build_id": env["BUILD_ID"],
+              "commit": env["COMMIT"],
+              "built_at": env["BUILT_AT"],
+              "protocol": int(env["PROTOCOL"]),
+              "notes": (
+                  f"Fork build {env['BUILD_ID']}\n\n"
+                  f"Built from `{env['COMMIT'][:12]}` on `master` of {repo}.\n"
+                  f"Base stable: v{env['BASE_VERSION']}\n"
+                  f"Release: https://github.com/{repo}/releases/tag/{tag}\n\n"
+                  "### Changed\n"
+                  "- Rebuilt from the current fork master branch.\n"
+              ),
+              "assets": assets,
+          }
+          pathlib.Path("release/preview.json").write_text(
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+
+          # A manifest that does not parse would break every client that polls
+          # it, so it is validated before it is published.
+          python3 -c "
+          import json, sys
+          m = json.load(open('release/preview.json'))
+          required = ['channel', 'base_version', 'build_id', 'commit', 'built_at', 'protocol', 'notes', 'assets']
+          missing = [k for k in required if not m.get(k)]
+          if missing:
+              sys.exit(f'manifest is missing {missing}')
+          if m['channel'] != 'preview':
+              sys.exit('manifest channel must be preview')
+          "
+          cat release/preview.json
+
       - name: Publish release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
-          tag_name: ${{ steps.assemble.outputs.tag }}
-          name: ${{ steps.assemble.outputs.tag }}
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: ${{ needs.meta.outputs.tag }}
           body_path: RELEASE_BODY.md
           files: |
             release/herdr-linux-x86_64
             release/herdr-linux-aarch64
             release/SHA256SUMS
+            release/preview.json
+
+      # Published last: the manifest must never advertise assets that are not
+      # uploaded yet. The `updates` branch only ever holds this one file, so it
+      # is built from an empty repository rather than branched off master.
+      - name: Publish manifest to the updates branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BUILD_ID: ${{ needs.meta.outputs.build_id }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cp release/preview.json "$work/preview.json"
+          cd "$work"
+          git init -q -b updates
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          if git fetch -q --depth 1 origin updates 2>/dev/null; then
+            git reset -q FETCH_HEAD
+          fi
+          git add preview.json
+          if git diff --cached --quiet; then
+            echo "manifest unchanged; nothing to publish"
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "fork preview manifest $BUILD_ID"
+          git push -q origin updates
+          echo "published https://raw.githubusercontent.com/${REPO}/updates/preview.json"
