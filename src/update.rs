@@ -30,6 +30,8 @@ const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade herdr";
 const MISE_UPDATE_COMMAND: &str = "mise upgrade herdr";
 const NIX_UPDATE_COMMAND: &str = "update through Nix";
 const MISE_INSTALLS_DIR_ENV: &str = "MISE_INSTALLS_DIR";
+const STABLE_MANIFEST_URL_ENV: &str = "HERDR_STABLE_MANIFEST_URL";
+const PREVIEW_MANIFEST_URL_ENV: &str = "HERDR_PREVIEW_MANIFEST_URL";
 const FAKE_UPDATE_VERSION_ENV: &str = "HERDR_FAKE_UPDATE_VERSION";
 const FAKE_UPDATE_NOTES_VERSION_ENV: &str = "HERDR_FAKE_UPDATE_NOTES_VERSION";
 const DEFAULT_FAKE_UPDATE_NOTES_VERSION: &str = "0.3.0";
@@ -319,12 +321,63 @@ impl ReleaseInfo {
     }
 }
 
+/// Resolve the manifest URL for one channel.
+///
+/// Forks and self-hosted builds publish their own manifest, so both channel
+/// URLs can be redirected. The environment variable wins over the config file,
+/// which wins over the hosted herdr.dev default. Only `https://` overrides are
+/// honored: the manifest decides which binary gets installed, so a plaintext
+/// source would hand that decision to the network.
+fn resolve_manifest_url(
+    from_env: Option<String>,
+    from_config: Option<String>,
+    default_url: &'static str,
+) -> String {
+    for candidate in [from_env, from_config].into_iter().flatten() {
+        let candidate = candidate.trim();
+        if candidate.is_empty() {
+            continue;
+        }
+        if !candidate.starts_with("https://") {
+            tracing::warn!(
+                url = candidate,
+                "ignoring update manifest override: only https:// URLs are accepted"
+            );
+            continue;
+        }
+        return candidate.to_string();
+    }
+    default_url.to_string()
+}
+
+fn stable_manifest_url() -> String {
+    resolve_manifest_url(
+        env::var(STABLE_MANIFEST_URL_ENV).ok(),
+        crate::config::Config::load()
+            .config
+            .update
+            .stable_manifest_url,
+        STABLE_UPDATE_MANIFEST_URL,
+    )
+}
+
+fn preview_manifest_url() -> String {
+    resolve_manifest_url(
+        env::var(PREVIEW_MANIFEST_URL_ENV).ok(),
+        crate::config::Config::load()
+            .config
+            .update
+            .preview_manifest_url,
+        PREVIEW_UPDATE_MANIFEST_URL,
+    )
+}
+
 fn fetch_update_manifest() -> Result<UpdateManifest, String> {
-    fetch_json_manifest(STABLE_UPDATE_MANIFEST_URL)
+    fetch_json_manifest(&stable_manifest_url())
 }
 
 fn fetch_preview_manifest() -> Result<PreviewManifest, String> {
-    fetch_json_manifest(PREVIEW_UPDATE_MANIFEST_URL)
+    fetch_json_manifest(&preview_manifest_url())
 }
 
 fn fetch_json_manifest<T>(url: &str) -> Result<T, String>
@@ -3292,6 +3345,62 @@ mod tests {
     }
 
     #[test]
+    fn manifest_url_defaults_to_the_hosted_manifest() {
+        assert_eq!(
+            resolve_manifest_url(None, None, STABLE_UPDATE_MANIFEST_URL),
+            STABLE_UPDATE_MANIFEST_URL
+        );
+        assert_eq!(
+            resolve_manifest_url(
+                Some("   ".into()),
+                Some(String::new()),
+                PREVIEW_UPDATE_MANIFEST_URL
+            ),
+            PREVIEW_UPDATE_MANIFEST_URL
+        );
+    }
+
+    #[test]
+    fn manifest_url_prefers_env_then_config() {
+        assert_eq!(
+            resolve_manifest_url(
+                Some("https://env.test/preview.json".into()),
+                Some("https://config.test/preview.json".into()),
+                PREVIEW_UPDATE_MANIFEST_URL,
+            ),
+            "https://env.test/preview.json"
+        );
+        assert_eq!(
+            resolve_manifest_url(
+                None,
+                Some(" https://config.test/preview.json ".into()),
+                PREVIEW_UPDATE_MANIFEST_URL,
+            ),
+            "https://config.test/preview.json"
+        );
+    }
+
+    #[test]
+    fn manifest_url_rejects_non_https_overrides() {
+        assert_eq!(
+            resolve_manifest_url(
+                Some("http://fork.test/preview.json".into()),
+                Some("https://config.test/preview.json".into()),
+                PREVIEW_UPDATE_MANIFEST_URL,
+            ),
+            "https://config.test/preview.json"
+        );
+        assert_eq!(
+            resolve_manifest_url(
+                Some("file:///tmp/preview.json".into()),
+                None,
+                PREVIEW_UPDATE_MANIFEST_URL,
+            ),
+            PREVIEW_UPDATE_MANIFEST_URL
+        );
+    }
+
+    #[test]
     fn update_manifest_deserializes() {
         let json = "{\n\
             \"version\": \"0.2.0\",\n\
@@ -3556,6 +3665,46 @@ mod tests {
         assert_eq!(release.identity, "9.9.9-preview.2026-06-02-abcdef123456");
         assert_eq!(release.target_protocol, Some(77));
         assert_eq!(release.sha256.as_deref(), Some("deadbeef"));
+    }
+
+    /// The fork build workflow publishes a Linux-only preview manifest with no
+    /// `builds` archive. Keep parsing it, so a schema change here shows up as a
+    /// failing test instead of a silent stop to fork update checks.
+    #[test]
+    fn preview_manifest_parses_linux_only_fork_manifest() {
+        let json = r#"{
+            "schema_version": 1,
+            "channel": "preview",
+            "base_version": "0.8.2",
+            "build_id": "2026-09-08-abc1234def56",
+            "commit": "abc1234def56789012345678901234567890abcd",
+            "built_at": "2026-09-08T12:00:00Z",
+            "protocol": 21,
+            "notes": "Fork build 2026-09-08-abc1234def56",
+            "assets": {
+                "linux-x86_64": {
+                    "url": "https://example.test/herdr-linux-x86_64",
+                    "sha256": "aaaa"
+                },
+                "linux-aarch64": {
+                    "url": "https://example.test/herdr-linux-aarch64",
+                    "sha256": "bbbb"
+                }
+            }
+        }"#;
+
+        let manifest: PreviewManifest = serde_json::from_str(json).unwrap();
+
+        assert_eq!(manifest.channel, "preview");
+        assert_eq!(manifest.build_id, "2026-09-08-abc1234def56");
+        assert_eq!(manifest.protocol, 21);
+        assert!(manifest.builds.is_empty());
+        let asset = manifest
+            .assets
+            .get("linux-x86_64")
+            .expect("linux-x86_64 asset");
+        assert_eq!(asset.url, "https://example.test/herdr-linux-x86_64");
+        assert_eq!(asset.sha256.as_deref(), Some("aaaa"));
     }
 
     #[test]

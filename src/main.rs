@@ -172,6 +172,13 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Check herdr.dev for remote agent-detection manifest updates in the background.
 # manifest_check = true
 
+# Update manifests to check instead of the hosted herdr.dev ones. Set these when
+# a fork or a self-hosted build publishes its own manifest. Only https:// URLs
+# are accepted. The HERDR_STABLE_MANIFEST_URL and HERDR_PREVIEW_MANIFEST_URL
+# environment variables override these.
+# stable_manifest_url = "https://example.com/latest.json"
+# preview_manifest_url = "https://example.com/preview.json"
+
 [keys]
 # Prefix key to enter prefix mode (default: "ctrl+b")
 # Examples: "ctrl+b", "f12", "esc", "-"

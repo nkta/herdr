@@ -28,12 +28,18 @@ impl UpdateChannelConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct UpdateConfig {
     pub channel: UpdateChannelConfig,
     pub version_check: bool,
     pub manifest_check: bool,
+    /// Override the hosted stable update manifest, for forks and self-hosted
+    /// builds that publish their own `latest.json`. `None` keeps herdr.dev.
+    pub stable_manifest_url: Option<String>,
+    /// Override the hosted preview update manifest, for forks and self-hosted
+    /// builds that publish their own `preview.json`. `None` keeps herdr.dev.
+    pub preview_manifest_url: Option<String>,
 }
 
 impl Default for UpdateConfig {
@@ -42,6 +48,8 @@ impl Default for UpdateConfig {
             channel: default_update_channel(),
             version_check: true,
             manifest_check: true,
+            stable_manifest_url: None,
+            preview_manifest_url: None,
         }
     }
 }
@@ -1248,18 +1256,26 @@ mod tests {
         assert_eq!(default_config.update.channel, default_update_channel());
         assert!(default_config.update.version_check);
         assert!(default_config.update.manifest_check);
+        assert_eq!(default_config.update.stable_manifest_url, None);
+        assert_eq!(default_config.update.preview_manifest_url, None);
 
         let toml = r#"
 [update]
 channel = "preview"
 version_check = false
 manifest_check = false
+preview_manifest_url = "https://example.test/preview.json"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.update.channel, UpdateChannelConfig::Preview);
         assert_eq!(config.update.channel.as_str(), "preview");
         assert!(!config.update.version_check);
         assert!(!config.update.manifest_check);
+        assert_eq!(config.update.stable_manifest_url, None);
+        assert_eq!(
+            config.update.preview_manifest_url.as_deref(),
+            Some("https://example.test/preview.json")
+        );
     }
 
     #[test]

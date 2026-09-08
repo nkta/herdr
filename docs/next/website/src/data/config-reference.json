@@ -462,6 +462,18 @@
           "type": "boolean",
           "default": "true",
           "description": "Check herdr.dev for remote agent-detection manifest updates in the background. Bundled manifests and local overrides still apply."
+        },
+        {
+          "key": "update.stable_manifest_url",
+          "type": "string",
+          "default": "unset (herdr.dev)",
+          "description": "Stable update manifest to check instead of the hosted herdr.dev one, for forks and self-hosted builds that publish their own latest.json. Only https:// URLs are accepted. The HERDR_STABLE_MANIFEST_URL environment variable overrides it."
+        },
+        {
+          "key": "update.preview_manifest_url",
+          "type": "string",
+          "default": "unset (herdr.dev)",
+          "description": "Preview update manifest to check instead of the hosted herdr.dev one, for forks and self-hosted builds that publish their own preview.json. Only https:// URLs are accepted. The HERDR_PREVIEW_MANIFEST_URL environment variable overrides it."
         }
       ]
     },
