@@ -7,15 +7,7 @@ use std::time::Instant;
 
 use crate::detect::{Agent, AgentState};
 use crate::layout::PaneId;
-use crate::workspace::{FileDiff, GitStatusCacheEntry, GitWorkingTreeStatus, WorkspaceGitStatus};
-
-/// One mutating action taken on a single working-tree file from the Git sidebar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GitFileAction {
-    Stage,
-    Unstage,
-    Discard,
-}
+use crate::workspace::{GitStatusCacheEntry, WorkspaceGitStatus};
 
 #[derive(Debug)]
 pub struct ApiWorktreeAddRequest {
@@ -45,6 +37,7 @@ pub struct ApiWorktreeRemoveRequest {
     pub id: String,
     pub operation_id: u64,
     pub checkout_key: std::path::PathBuf,
+    pub shutdown_panes: Vec<crate::layout::PaneId>,
     pub respond_to: std::sync::mpsc::Sender<String>,
 }
 
@@ -63,7 +56,12 @@ pub struct WorktreeRemoveResult {
 #[derive(Debug)]
 pub enum AppEvent {
     /// A pane's child process exited.
-    PaneDied { pane_id: PaneId },
+    PaneDied {
+        pane_id: PaneId,
+        exit_reason: crate::platform::ChildExitReason,
+    },
+    /// A worktree-removal runtime could not be restored normally.
+    WorktreeRuntimeRestoreFailed { pane_id: PaneId, operation_id: u64 },
     /// Process detection identified an agent before its screen state was confirmed.
     AgentProcessDetected {
         pane_id: PaneId,
@@ -145,11 +143,6 @@ pub enum AppEvent {
     /// A pane child emitted a valid OSC 52 clipboard write. The main loop
     /// re-emits it through herdr's own clipboard writer.
     ClipboardWrite { content: Vec<u8> },
-    /// Prefix-mode ASCII input-source request, emitted on entering/leaving the ASCII input
-    /// realm. The foreground process applies the host-local TIS switch (`active = true`) /
-    /// restore (`active = false`): the client in server mode (via server forwarding), the
-    /// app itself in monolithic mode.
-    PrefixInputSource { active: bool },
     /// A pane child reported its shell current directory through terminal
     /// metadata such as OSC 7.
     TerminalCwdReported {
@@ -180,32 +173,4 @@ pub enum AppEvent {
     WorktreeAddFinished(Box<WorktreeAddResult>),
     /// Background `git worktree remove` completed.
     WorktreeRemoveFinished(Box<WorktreeRemoveResult>),
-    /// Background Git sidebar working-tree status refresh completed.
-    GitWorkingTreeStatusRefreshed {
-        repo_root: std::path::PathBuf,
-        status: Option<GitWorkingTreeStatus>,
-    },
-    /// Background diff fetch for a selected file completed. `generation` is dropped by the
-    /// handler when it no longer matches the latest fetch (the selection moved on).
-    GitDiffReady {
-        generation: u64,
-        repo_root: std::path::PathBuf,
-        path: String,
-        staged: bool,
-        diff: Option<FileDiff>,
-    },
-    /// Background stage/unstage/discard action for one file completed.
-    GitFileActionFinished {
-        action: GitFileAction,
-        path: String,
-        result: Result<(), String>,
-    },
-    /// Background commit of the staged changes completed.
-    GitCommitFinished { result: Result<(), String> },
-    /// Background listing for the Git picker (stashes or branches) completed.
-    GitPickerEntriesReady {
-        generation: u64,
-        repo_root: std::path::PathBuf,
-        entries: Option<Vec<crate::workspace::GitListEntry>>,
-    },
 }

@@ -109,15 +109,6 @@ pub enum AgentPanelSortConfig {
     Priority,
 }
 
-impl AgentPanelSortConfig {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Spaces => "spaces",
-            Self::Priority => "priority",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum LegacyAgentPanelScopeConfig {
@@ -275,6 +266,8 @@ pub struct TerminalConfig {
     pub shell_mode: ShellModeConfig,
     /// CWD policy for new interactive panes, tabs, and workspaces.
     pub new_cwd: NewTerminalCwdConfig,
+    /// Render Kitty graphics in compatible outer terminals. Default: true.
+    pub kitty_graphics: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -380,7 +373,7 @@ pub struct KeysConfig {
     pub navigate_pane_up: BindingConfig,
     /// Focus the pane to the right in navigate mode. Default: "l". Right arrow is always an alias.
     pub navigate_pane_right: BindingConfig,
-    /// Detach from server/client mode, or exit --no-session mode. Default: "prefix+q".
+    /// Detach the current client from its Herdr server. Default: "prefix+q".
     pub detach: BindingConfig,
     /// Reload config.toml in the running app/server. Default: "prefix+shift+r".
     pub reload_config: BindingConfig,
@@ -465,8 +458,6 @@ pub struct KeysConfig {
     pub resize_pane_right: BindingConfig,
     /// Toggle sidebar collapse. Default: "prefix+b"
     pub toggle_sidebar: BindingConfig,
-    /// Toggle the sidebar's SPACES/GIT view. Default: "prefix+t"
-    pub toggle_sidebar_git_view: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
     pub indexed: IndexedKeysConfig,
     /// Prefix-mode custom command bindings.
@@ -598,11 +589,15 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     toggle_sidebar: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    toggle_sidebar_git_view: Option<BindingConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     indexed: Option<IndexedKeysConfig>,
     #[serde(skip_serializing)]
     command: Option<Vec<CommandKeybindConfig>>,
+}
+
+impl KeysConfigOverlay {
+    pub(crate) fn set_prefix(&mut self, prefix: String) {
+        self.prefix = Some(prefix);
+    }
 }
 
 impl<'de> Deserialize<'de> for KeysConfig {
@@ -681,7 +676,6 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(resize_pane_up);
         apply_field!(resize_pane_right);
         apply_field!(toggle_sidebar);
-        apply_field!(toggle_sidebar_git_view);
         apply_field!(indexed);
         apply_field!(command);
 
@@ -786,7 +780,6 @@ impl KeysConfig {
         copy_effective_action_field!(resize_pane_up, keybinds.resize_pane_up);
         copy_effective_action_field!(resize_pane_right, keybinds.resize_pane_right);
         copy_effective_action_field!(toggle_sidebar, keybinds.toggle_sidebar);
-        copy_effective_action_field!(toggle_sidebar_git_view, keybinds.toggle_sidebar_git_view);
         copy_user_field!(indexed);
 
         profile
@@ -859,6 +852,60 @@ pub enum TabBarPositionConfig {
     Bottom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaneBordersConfig {
+    #[default]
+    Auto,
+    Always,
+    Off,
+}
+
+impl PaneBordersConfig {
+    pub fn draws_borders(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    pub fn shows_borders(self, multi_pane: bool) -> bool {
+        self.draws_borders() && (multi_pane || matches!(self, Self::Always))
+    }
+}
+
+impl<'de> Deserialize<'de> for PaneBordersConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PaneBordersVisitor;
+
+        impl<'de> de::Visitor<'de> for PaneBordersVisitor {
+            type Value = PaneBordersConfig;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("\"auto\", \"always\", \"off\", or a legacy boolean")
+            }
+
+            fn visit_bool<E: de::Error>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(if value {
+                    PaneBordersConfig::Auto
+                } else {
+                    PaneBordersConfig::Off
+                })
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                match value {
+                    "auto" => Ok(PaneBordersConfig::Auto),
+                    "always" => Ok(PaneBordersConfig::Always),
+                    "off" => Ok(PaneBordersConfig::Off),
+                    other => Err(E::invalid_value(de::Unexpected::Str(other), &self)),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(PaneBordersVisitor)
+    }
+}
+
 /// How long prefix mode waits before listing its keybindings.
 ///
 /// Accepts a millisecond count or `false`. Typing through the prefix faster
@@ -925,8 +972,12 @@ pub struct UiConfig {
     /// Delay before prefix mode lists its keybindings, in milliseconds.
     /// `0` shows the panel immediately, `false` disables it. Default: 400.
     pub prefix_hint_delay_ms: PrefixHintDelayConfig,
-    /// Draw borders around split panes. Default: true.
-    pub pane_borders: bool,
+    /// Draw borders around split panes. auto draws them only for split panes,
+    /// always also frames a lone pane (only while pane_outer_borders is
+    /// enabled, since every edge of a lone pane is an outer edge), off
+    /// disables them. Legacy booleans map true to auto and false to off.
+    /// Default: auto.
+    pub pane_borders: PaneBordersConfig,
     /// Draw borders along the outside edge of the pane area. Default: true.
     pub pane_outer_borders: bool,
     /// Draw interactive scrollbars beside terminal panes. Default: true.
@@ -1029,8 +1080,8 @@ impl Default for RemoteConfig {
 pub struct ExperimentalConfig {
     /// Allow launching herdr inside an existing herdr pane. Default: false.
     pub allow_nested: bool,
-    /// Experimental local Kitty graphics rendering for attached clients. Default: false.
-    pub kitty_graphics: bool,
+    /// Deprecated compatibility key for `terminal.kitty_graphics`.
+    pub kitty_graphics: Option<bool>,
     /// Persist pane screen history to session-history.json. Default: false.
     pub pane_history: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
@@ -1131,7 +1182,6 @@ impl Default for KeysConfig {
             resize_pane_up: BindingConfig::empty(),
             resize_pane_right: BindingConfig::empty(),
             toggle_sidebar: BindingConfig::one("prefix+b"),
-            toggle_sidebar_git_view: BindingConfig::one("prefix+t"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
             user_fields: BTreeSet::new(),
@@ -1166,7 +1216,7 @@ impl Default for UiConfig {
             prompt_new_tab_name: true,
             prompt_new_workspace_name: false,
             prefix_hint_delay_ms: PrefixHintDelayConfig::default(),
-            pane_borders: true,
+            pane_borders: PaneBordersConfig::Auto,
             pane_outer_borders: true,
             pane_scrollbars: true,
             pane_gaps: true,
@@ -1291,15 +1341,12 @@ mod tests {
         assert_eq!(default_config.update.channel, default_update_channel());
         assert!(default_config.update.version_check);
         assert!(default_config.update.manifest_check);
-        assert_eq!(default_config.update.stable_manifest_url, None);
-        assert_eq!(default_config.update.preview_manifest_url, None);
 
         let toml = r#"
 [update]
 channel = "preview"
 version_check = false
 manifest_check = false
-preview_manifest_url = "https://example.test/preview.json"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.update.channel, UpdateChannelConfig::Preview);
@@ -1307,10 +1354,23 @@ preview_manifest_url = "https://example.test/preview.json"
         assert!(!config.update.version_check);
         assert!(!config.update.manifest_check);
         assert_eq!(config.update.stable_manifest_url, None);
+    }
+
+    #[test]
+    fn update_manifest_urls_default_to_the_hosted_ones() {
+        let default_config = Config::default();
+        assert_eq!(default_config.update.stable_manifest_url, None);
+        assert_eq!(default_config.update.preview_manifest_url, None);
+
+        let config: Config = toml::from_str(
+            "[update]\npreview_manifest_url = \"https://example.test/preview.json\"",
+        )
+        .unwrap();
         assert_eq!(
             config.update.preview_manifest_url.as_deref(),
             Some("https://example.test/preview.json")
         );
+        assert_eq!(config.update.stable_manifest_url, None);
     }
 
     #[test]
@@ -1481,9 +1541,34 @@ status_indicators = "symbols"
     }
 
     #[test]
+    fn pane_borders_legacy_booleans_map_to_modes() {
+        let enabled: Config = toml::from_str("[ui]\npane_borders = true").unwrap();
+        assert_eq!(enabled.ui.pane_borders, PaneBordersConfig::Auto);
+
+        let disabled: Config = toml::from_str("[ui]\npane_borders = false").unwrap();
+        assert_eq!(disabled.ui.pane_borders, PaneBordersConfig::Off);
+
+        let auto: Config = toml::from_str("[ui]\npane_borders = \"auto\"").unwrap();
+        assert_eq!(auto.ui.pane_borders, PaneBordersConfig::Auto);
+
+        let off: Config = toml::from_str("[ui]\npane_borders = \"off\"").unwrap();
+        assert_eq!(off.ui.pane_borders, PaneBordersConfig::Off);
+
+        let unknown = toml::from_str::<Config>("[ui]\npane_borders = \"framed\"")
+            .unwrap_err()
+            .to_string();
+        assert!(unknown.contains("\"auto\", \"always\", \"off\", or a legacy boolean"));
+
+        let wrong_type = toml::from_str::<Config>("[ui]\npane_borders = 3")
+            .unwrap_err()
+            .to_string();
+        assert!(wrong_type.contains("\"auto\", \"always\", \"off\", or a legacy boolean"));
+    }
+
+    #[test]
     fn pane_appearance_defaults_and_parse() {
         let default_config = Config::default();
-        assert!(default_config.ui.pane_borders);
+        assert_eq!(default_config.ui.pane_borders, PaneBordersConfig::Auto);
         assert!(default_config.ui.pane_outer_borders);
         assert!(default_config.ui.pane_scrollbars);
         assert!(default_config.ui.pane_gaps);
@@ -1498,7 +1583,7 @@ status_indicators = "symbols"
 
         let toml = r#"
 [ui]
-pane_borders = false
+pane_borders = "always"
 pane_outer_borders = false
 pane_scrollbars = false
 pane_gaps = true
@@ -1515,7 +1600,7 @@ tab_bar_right = [
 tab_bar_right_separator = " · "
 "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert!(!config.ui.pane_borders);
+        assert_eq!(config.ui.pane_borders, PaneBordersConfig::Always);
         assert!(!config.ui.pane_outer_borders);
         assert!(!config.ui.pane_scrollbars);
         assert!(config.ui.pane_gaps);
@@ -2004,16 +2089,41 @@ pane_history = true
     }
 
     #[test]
-    fn kitty_graphics_default_off_and_parse() {
-        let config = Config::default();
-        assert!(!config.experimental.kitty_graphics);
+    fn kitty_graphics_default_on_with_stable_opt_out() {
+        assert!(Config::default().kitty_graphics_enabled());
 
-        let toml = r#"
+        let config: Config = toml::from_str(
+            r#"
+[terminal]
+kitty_graphics = false
+"#,
+        )
+        .unwrap();
+        assert!(!config.kitty_graphics_enabled());
+    }
+
+    #[test]
+    fn legacy_experimental_kitty_graphics_setting_remains_compatible() {
+        let disabled: Config = toml::from_str(
+            r#"
+[experimental]
+kitty_graphics = false
+"#,
+        )
+        .unwrap();
+        assert!(!disabled.kitty_graphics_enabled());
+
+        let stable_setting_wins: Config = toml::from_str(
+            r#"
+[terminal]
+kitty_graphics = false
+
 [experimental]
 kitty_graphics = true
-"#;
-        let config: Config = toml::from_str(toml).unwrap();
-        assert!(config.experimental.kitty_graphics);
+"#,
+        )
+        .unwrap();
+        assert!(!stable_setting_wins.kitty_graphics_enabled());
     }
 
     #[test]
@@ -2027,7 +2137,8 @@ switch_ascii_input_source_in_prefix = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(config.experimental.allow_nested);
-        assert!(config.experimental.kitty_graphics);
+        assert_eq!(config.experimental.kitty_graphics, Some(true));
+        assert!(config.kitty_graphics_enabled());
         assert!(config.experimental.pane_history);
         assert!(config.experimental.switch_ascii_input_source_in_prefix);
     }

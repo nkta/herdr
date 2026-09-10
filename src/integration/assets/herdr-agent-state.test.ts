@@ -121,7 +121,7 @@ async function startRecordingServer(name: string): Promise<unknown[]> {
   server = recordingServer;
   await new Promise<void>((resolve, reject) => {
     recordingServer.once("error", reject);
-    recordingServer.listen(recordingSocketPath, resolve);
+    recordingServer.listen(originalPlatform === "win32" ? `\\\\.\\pipe\\${recordingSocketPath}` : recordingSocketPath, resolve);
   });
   configureIntegrationEnvironment(recordingSocketPath);
   return requests;
@@ -238,6 +238,28 @@ test("OMP accepts POSIX and Windows session paths", async () => {
   );
   expect(isAbsoluteSessionPath("C:/Users/User/.omp/agent/sessions/omp-session.jsonl")).toBe(true);
   expect(isAbsoluteSessionPath("relative/omp-session.jsonl")).toBe(false);
+});
+
+test("Pi reports a Windows session path", async () => {
+  const requests = await startRecordingServer("pi-windows-session-path");
+  const { handlers, pi } = createExtensionHarness();
+  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
+  install(pi);
+
+  const sessionPath = "C:\\Users\\User\\.pi\\agent\\sessions\\pi-session.jsonl";
+  await handlers.get("session_start")?.(
+    { reason: "startup" },
+    {
+      ...piContext(() => true),
+      sessionManager: {
+        getSessionFile: () => sessionPath,
+        getSessionId: () => "pi-session",
+      },
+    },
+  );
+  await waitFor(() => requests.length === 2);
+
+  expect(requests.map(requestSessionPath)).toEqual([sessionPath, sessionPath]);
 });
 
 test("Pi reports idle only after the agent settles", async () => {
@@ -378,7 +400,7 @@ test("Pi waits for a replacement session report before publishing state", async 
   server = recordingServer;
   await new Promise<void>((resolve, reject) => {
     recordingServer.once("error", reject);
-    recordingServer.listen(recordingSocketPath, resolve);
+    recordingServer.listen(originalPlatform === "win32" ? `\\\\.\\pipe\\${recordingSocketPath}` : recordingSocketPath, resolve);
   });
 
   configureIntegrationEnvironment(recordingSocketPath);
@@ -457,7 +479,7 @@ async function startDroppedFirstResponseServer(name: string) {
   server = recordingServer;
   await new Promise<void>((resolve, reject) => {
     recordingServer.once("error", reject);
-    recordingServer.listen(recordingSocketPath, resolve);
+    recordingServer.listen(originalPlatform === "win32" ? `\\\\.\\pipe\\${recordingSocketPath}` : recordingSocketPath, resolve);
   });
 
   configureIntegrationEnvironment(recordingSocketPath);
@@ -615,6 +637,13 @@ function requestState(request: unknown): unknown {
     return undefined;
   }
   return request.params.state;
+}
+
+function requestSessionPath(request: unknown): unknown {
+  if (!isRecord(request) || !isRecord(request.params)) {
+    return undefined;
+  }
+  return request.params.agent_session_path;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -169,6 +169,18 @@ pub struct ActionKeybinds {
 }
 
 impl ActionKeybinds {
+    pub(crate) fn from_labels(labels: &[String]) -> Result<Self, String> {
+        let mut bindings = Vec::new();
+        for label in labels {
+            match parse_binding_string(label) {
+                Some(ParsedBinding::Single(binding)) => bindings.push(binding),
+                Some(ParsedBinding::Range(range)) => bindings.extend(range),
+                None => return Err(format!("invalid endpoint command binding: {label}")),
+            }
+        }
+        Ok(Self { bindings })
+    }
+
     #[cfg(test)]
     pub fn prefix(label: &str) -> Self {
         let raw = if label.starts_with("prefix+") {
@@ -357,7 +369,6 @@ pub struct Keybinds {
     pub resize_pane_up: ActionKeybinds,
     pub resize_pane_right: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
-    pub toggle_sidebar_git_view: ActionKeybinds,
     pub custom_commands: Vec<CustomCommandKeybind>,
 }
 
@@ -526,7 +537,6 @@ impl Config {
             resize_pane_up: empty_action!(),
             resize_pane_right: empty_action!(),
             toggle_sidebar: empty_action!(),
-            toggle_sidebar_git_view: empty_action!(),
             custom_commands: Vec::new(),
         };
 
@@ -674,11 +684,6 @@ impl Config {
             apply_action!(keybinds.resize_pane_up, resize_pane_up, source);
             apply_action!(keybinds.resize_pane_right, resize_pane_right, source);
             apply_action!(keybinds.toggle_sidebar, toggle_sidebar, source);
-            apply_action!(
-                keybinds.toggle_sidebar_git_view,
-                toggle_sidebar_git_view,
-                source
-            );
 
             if source == field_source!(indexed) {
                 append_legacy_indexed_bindings(
