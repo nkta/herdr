@@ -53,6 +53,9 @@ pub const CONFIG_PATH_ENV_VAR: &str = "HERDR_CONFIG_PATH";
 pub const DEFAULT_SCROLLBACK_LIMIT_BYTES: usize = 10_000_000;
 pub const DEFAULT_MOUSE_SCROLL_LINES: usize = 3;
 pub const DEFAULT_MOBILE_WIDTH_THRESHOLD: u16 = 64;
+/// Prefix mode lists its keybindings after this delay. Long enough that typing
+/// a known prefix chord never flashes the panel.
+pub const DEFAULT_PREFIX_HINT_DELAY_MS: u64 = 400;
 pub const DEFAULT_HEADLESS_COLS: u16 = 120;
 pub const DEFAULT_HEADLESS_ROWS: u16 = 40;
 

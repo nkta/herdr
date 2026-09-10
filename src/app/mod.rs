@@ -143,6 +143,9 @@ pub struct App {
     pub(crate) next_agent_manifest_update_check: Option<Instant>,
     pub(crate) update_version_check_enabled: bool,
     pub(crate) update_manifest_check_enabled: bool,
+    /// How long prefix mode waits before listing its keybindings. `None` disables the panel.
+    pub(crate) prefix_hint_delay: Option<Duration>,
+    pub(crate) prefix_hint_deadline: Option<Instant>,
     pub(crate) loaded_host_cursor: crate::config::HostCursorModeConfig,
     pub(crate) agent_metadata_deadline: Option<Instant>,
     pub(crate) pending_agent_resume_deadline: Option<Instant>,
@@ -642,6 +645,7 @@ impl App {
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
+            prefix_hint_visible: false,
             update_available,
             update_install_command,
             latest_release_notes_available,
@@ -811,6 +815,8 @@ impl App {
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
             update_version_check_enabled: config.update.version_check,
             update_manifest_check_enabled: config.update.manifest_check,
+            prefix_hint_delay: config.ui.prefix_hint_delay_ms.delay(),
+            prefix_hint_deadline: None,
             loaded_host_cursor: config.ui.host_cursor,
             agent_metadata_deadline: None,
             pending_agent_resume_deadline: None,
@@ -1511,6 +1517,11 @@ impl App {
                 self.state.sidebar_max_width = config.ui.sidebar_max_width;
                 self.state.sidebar_collapsed_mode = config.ui.sidebar_collapsed_mode;
                 self.state.mobile_width_threshold = config.ui.mobile_width_threshold;
+                self.prefix_hint_delay = config.ui.prefix_hint_delay_ms.delay();
+                if self.prefix_hint_delay.is_none() {
+                    self.prefix_hint_deadline = None;
+                    self.state.prefix_hint_visible = false;
+                }
                 // Re-clamp the live width to the new bounds. No source guard — bounds
                 // always apply, including to widths owned by Persisted or Manual.
                 self.state.sidebar_width = self

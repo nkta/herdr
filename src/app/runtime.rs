@@ -6,7 +6,7 @@ use std::time::Duration;
 use crossterm::terminal;
 
 use super::{
-    background_update_check_enabled, App, AUTO_UPDATE_CHECK_INTERVAL, MIN_RENDER_INTERVAL,
+    background_update_check_enabled, App, Mode, AUTO_UPDATE_CHECK_INTERVAL, MIN_RENDER_INTERVAL,
     RESIZE_POLL_INTERVAL, SELECTION_AUTOSCROLL_INTERVAL,
 };
 fn retain_detached_process_after_wait(
@@ -387,6 +387,7 @@ impl App {
 
         changed |= self.expire_due_metadata(now);
         changed |= self.handle_tab_bar_status_tasks(now);
+        changed |= self.sync_prefix_hint(now);
 
         if geometry_dirty || resized {
             self.pending_agent_resume_deadline = None;
@@ -551,6 +552,36 @@ impl App {
         }
     }
 
+    /// Reconcile the prefix keybinding panel with the current mode.
+    ///
+    /// Reconciling from the mode rather than hooking every transition keeps the
+    /// panel correct however prefix mode was entered or left, including through
+    /// the API. Returns whether the panel's visibility changed, so the caller
+    /// can mark the frame dirty.
+    pub(crate) fn sync_prefix_hint(&mut self, now: Instant) -> bool {
+        let armed = self.state.mode == Mode::Prefix && self.prefix_hint_delay.is_some();
+        if !armed {
+            self.prefix_hint_deadline = None;
+            return std::mem::take(&mut self.state.prefix_hint_visible);
+        }
+
+        if self.state.prefix_hint_visible {
+            return false;
+        }
+
+        let Some(delay) = self.prefix_hint_delay else {
+            return false;
+        };
+        let deadline = *self.prefix_hint_deadline.get_or_insert(now + delay);
+        if now < deadline {
+            return false;
+        }
+
+        self.prefix_hint_deadline = None;
+        self.state.prefix_hint_visible = true;
+        true
+    }
+
     pub(crate) fn run_auto_update_check(&mut self) {
         if !background_update_check_enabled(self.no_session, self.update_version_check_enabled) {
             self.next_auto_update_check = None;
@@ -628,6 +659,7 @@ impl App {
             self.session_save_deadline,
             self.selection_autoscroll_deadline,
             self.selection_highlight_clear_deadline,
+            self.prefix_hint_deadline,
             self.next_tab_bar_status_deadline(),
             render_deadline,
         ]
@@ -673,6 +705,106 @@ mod tests {
     use super::*;
     use crate::app::state;
     use crate::workspace::Workspace;
+
+    fn prefix_hint_app() -> super::super::App {
+        super::super::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            tokio::sync::mpsc::unbounded_channel().1,
+            crate::api::EventHub::default(),
+        )
+    }
+
+    #[test]
+    fn prefix_hint_appears_only_after_the_delay() {
+        let mut app = prefix_hint_app();
+        let delay = app.prefix_hint_delay.expect("panel enabled by default");
+        let start = Instant::now();
+
+        app.state.mode = Mode::Prefix;
+        assert!(!app.sync_prefix_hint(start));
+        assert!(!app.state.prefix_hint_visible);
+        assert_eq!(app.prefix_hint_deadline, Some(start + delay));
+
+        // A second pass before the deadline must not re-arm it.
+        assert!(!app.sync_prefix_hint(start + delay / 2));
+        assert_eq!(app.prefix_hint_deadline, Some(start + delay));
+
+        assert!(app.sync_prefix_hint(start + delay));
+        assert!(app.state.prefix_hint_visible);
+        assert_eq!(app.prefix_hint_deadline, None);
+        // Already visible: nothing left to change.
+        assert!(!app.sync_prefix_hint(start + delay * 2));
+    }
+
+    #[test]
+    fn prefix_hint_clears_when_prefix_mode_is_left() {
+        let mut app = prefix_hint_app();
+        let delay = app.prefix_hint_delay.expect("panel enabled by default");
+        let start = Instant::now();
+
+        app.state.mode = Mode::Prefix;
+        assert!(!app.sync_prefix_hint(start));
+        assert!(app.sync_prefix_hint(start + delay));
+
+        app.state.mode = Mode::Terminal;
+        assert!(app.sync_prefix_hint(start + delay));
+        assert!(!app.state.prefix_hint_visible);
+        assert_eq!(app.prefix_hint_deadline, None);
+
+        // Re-entering prefix mode starts the delay over.
+        app.state.mode = Mode::Prefix;
+        let reentry = start + delay * 3;
+        assert!(!app.sync_prefix_hint(reentry));
+        assert_eq!(app.prefix_hint_deadline, Some(reentry + delay));
+    }
+
+    #[test]
+    fn prefix_hint_stays_hidden_when_disabled() {
+        let mut app = prefix_hint_app();
+        app.prefix_hint_delay = None;
+        let now = Instant::now();
+
+        app.state.mode = Mode::Prefix;
+        assert!(!app.sync_prefix_hint(now));
+        assert!(!app.state.prefix_hint_visible);
+        assert_eq!(app.prefix_hint_deadline, None);
+        assert!(!app.sync_prefix_hint(now + Duration::from_secs(60)));
+        assert!(!app.state.prefix_hint_visible);
+    }
+
+    #[test]
+    fn prefix_hint_deadline_wakes_the_loop() {
+        let mut app = prefix_hint_app();
+        let delay = app.prefix_hint_delay.expect("panel enabled by default");
+        let now = Instant::now();
+
+        // Push the always-armed resize poll out so the panel deadline is the
+        // only one left to pick.
+        app.next_resize_poll = now + Duration::from_secs(3600);
+        let baseline = app.next_loop_deadline(now, false);
+
+        app.state.mode = Mode::Prefix;
+        app.sync_prefix_hint(now);
+
+        assert_ne!(app.next_loop_deadline(now, false), baseline);
+        assert_eq!(app.next_loop_deadline(now, false), Some(now + delay));
+    }
+
+    #[test]
+    fn scheduled_tasks_reveal_the_prefix_hint() {
+        let mut app = prefix_hint_app();
+        let delay = app.prefix_hint_delay.expect("panel enabled by default");
+        let now = Instant::now();
+
+        app.state.mode = Mode::Prefix;
+        app.handle_scheduled_tasks(now, false);
+        assert!(!app.state.prefix_hint_visible);
+
+        assert!(app.handle_scheduled_tasks(now + delay, false));
+        assert!(app.state.prefix_hint_visible);
+    }
 
     #[test]
     fn hidden_render_attempt_keeps_presentation_cadence_available() {

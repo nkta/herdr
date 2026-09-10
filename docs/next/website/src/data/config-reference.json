@@ -965,6 +965,12 @@
           "description": "Ask for a workspace name before interactive TUI creation."
         },
         {
+          "key": "ui.prefix_hint_delay_ms",
+          "type": "integer",
+          "default": "400",
+          "description": "Delay before prefix mode lists its keybindings in a panel, in milliseconds. Typing a known prefix chord faster than the delay never shows the panel. Use 0 to show it immediately, or false to disable it."
+        },
+        {
           "key": "ui.pane_borders",
           "type": "boolean",
           "default": "true",

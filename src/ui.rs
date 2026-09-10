@@ -1487,6 +1487,76 @@ mod tests {
         root
     }
 
+    fn prefix_hint_render(width: u16, height: u16) -> String {
+        let mut app = crate::app::state::AppState::test_new();
+        app.mode = Mode::Prefix;
+        app.prefix_hint_visible = true;
+        let area = ratatui::layout::Rect::new(0, 0, width, height);
+        app.view.terminal_area = area;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height))
+                .expect("test terminal");
+        terminal
+            .draw(|frame| render_prefix_overlay(&app, frame, area))
+            .expect("draw prefix overlay");
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn prefix_hint_panel_lists_grouped_prefix_keybindings() {
+        let rendered = prefix_hint_render(100, 24);
+
+        assert!(rendered.contains("PREFIX"), "{rendered}");
+        assert!(rendered.contains("panes"), "{rendered}");
+        assert!(rendered.contains("workspaces / tabs"), "{rendered}");
+        // The prefix is dropped: the panel is only shown once it is held.
+        assert!(rendered.contains("split vertical"), "{rendered}");
+        assert!(!rendered.contains("prefix+"), "{rendered}");
+        // The way out of the panel stays on screen.
+        assert!(rendered.contains("esc cancel"), "{rendered}");
+        assert!(rendered.contains("all keybinds"), "{rendered}");
+    }
+
+    #[test]
+    fn prefix_hint_panel_falls_back_to_the_mode_bar_when_it_cannot_fit() {
+        let rendered = prefix_hint_render(30, 5);
+
+        assert!(rendered.contains("PREFIX"), "{rendered}");
+        assert!(!rendered.contains("split vertical"), "{rendered}");
+    }
+
+    #[test]
+    fn prefix_hint_panel_is_hidden_until_the_delay_elapses() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.mode = Mode::Prefix;
+        app.prefix_hint_visible = false;
+        let area = ratatui::layout::Rect::new(0, 0, 100, 24);
+        app.view.terminal_area = area;
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24))
+            .expect("test terminal");
+        terminal
+            .draw(|frame| render_prefix_overlay(&app, frame, area))
+            .expect("draw prefix overlay");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("PREFIX"));
+        assert!(!rendered.contains("split vertical"), "{rendered}");
+    }
+
     #[test]
     fn prefix_mode_renders_prefix_indicator() {
         let mut app = crate::app::state::AppState::test_new();

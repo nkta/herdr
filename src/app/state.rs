@@ -1710,6 +1710,9 @@ pub struct AppState {
     pub selection: Option<Selection>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
     pub context_menu: Option<ContextMenuState>,
+    /// Prefix mode has been held long enough to list its keybindings.
+    /// Owned by the runtime timer so `render` stays a pure read.
+    pub prefix_hint_visible: bool,
     // Notifications
     pub update_available: Option<String>,
     pub update_install_command: String,
@@ -2119,6 +2122,7 @@ impl AppState {
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
+            prefix_hint_visible: false,
             update_available: None,
             update_install_command: "herdr update".into(),
             latest_release_notes_available: false,

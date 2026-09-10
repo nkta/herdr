@@ -28,7 +28,201 @@ fn render_bottom_bar(frame: &mut Frame, area: Rect, line: Line<'_>, bg: ratatui:
     frame.render_widget(Paragraph::new(line), area);
 }
 
+/// Columns are laid out from the widest entry in each group, so a group whose
+/// labels are short does not reserve the space the longest group needs.
+const PREFIX_HINT_COLUMN_GAP: u16 = 2;
+const PREFIX_HINT_MIN_COLUMN_WIDTH: u16 = 14;
+/// A group longer than this continues in the next column rather than making the
+/// panel tall enough to bury the panes it is supposed to help you work in.
+const PREFIX_HINT_MAX_ROWS: usize = 12;
+
+struct PrefixHintColumn {
+    title: &'static str,
+    entries: Vec<(String, String)>,
+    width: u16,
+}
+
+fn prefix_hint_columns(app: &AppState, max_rows: usize) -> Vec<PrefixHintColumn> {
+    let max_rows = max_rows.max(1);
+    let mut columns = Vec::new();
+    for (title, entries) in super::keybind_help::prefix_hint_groups(app) {
+        let entries: Vec<(String, String)> = entries
+            .into_iter()
+            .map(|(keys, label)| (keys, label.into_owned()))
+            .collect();
+        for (index, chunk) in entries.chunks(max_rows).enumerate() {
+            let width = chunk
+                .iter()
+                .map(|(keys, label)| keys.chars().count() + label.chars().count() + 2)
+                .chain(std::iter::once(title.chars().count()))
+                .max()
+                .unwrap_or(0)
+                .min(u16::MAX as usize) as u16;
+            columns.push(PrefixHintColumn {
+                // Only the first column of a wrapped group is titled; a repeated
+                // heading would read as a second, different group.
+                title: if index == 0 { title } else { "" },
+                entries: chunk.to_vec(),
+                width: width.max(PREFIX_HINT_MIN_COLUMN_WIDTH),
+            });
+        }
+    }
+    columns
+}
+
+/// Fit as many whole columns as the width allows, widest-first order preserved.
+fn fit_prefix_hint_columns(
+    columns: Vec<PrefixHintColumn>,
+    available: u16,
+) -> Vec<PrefixHintColumn> {
+    let mut used = 0u16;
+    let mut fitted = Vec::new();
+    for column in columns {
+        let needed = if fitted.is_empty() {
+            column.width
+        } else {
+            column.width.saturating_add(PREFIX_HINT_COLUMN_GAP)
+        };
+        if used.saturating_add(needed) > available {
+            break;
+        }
+        used = used.saturating_add(needed);
+        fitted.push(column);
+    }
+    fitted
+}
+
+/// The keybinding panel prefix mode shows once it has been held past the delay.
+///
+/// Anchored to the bottom of `area` and sized to its content, so it covers as
+/// little of the panes as the entries allow.
+pub(super) fn render_prefix_hint_panel(app: &AppState, frame: &mut Frame, area: Rect) -> bool {
+    let key = Style::default()
+        .fg(app.palette.accent)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(app.palette.overlay0);
+    let title_style = Style::default()
+        .fg(app.palette.text)
+        .add_modifier(Modifier::BOLD);
+
+    // Two border rows, one title row, one blank row and one footer row frame the entries.
+    let chrome_height = 5u16;
+    if area.height <= chrome_height || area.width < PREFIX_HINT_MIN_COLUMN_WIDTH + 2 {
+        return false;
+    }
+
+    let rows_available = (area.height - chrome_height) as usize;
+    let max_rows = rows_available.min(PREFIX_HINT_MAX_ROWS);
+    let columns = fit_prefix_hint_columns(
+        prefix_hint_columns(app, max_rows),
+        area.width.saturating_sub(2),
+    );
+    if columns.is_empty() {
+        return false;
+    }
+
+    let rows_needed = columns
+        .iter()
+        .map(|column| column.entries.len())
+        .max()
+        .unwrap_or(0)
+        .min(max_rows);
+    if rows_needed == 0 {
+        return false;
+    }
+
+    let panel_height = rows_needed as u16 + chrome_height;
+    let panel = Rect::new(
+        area.x,
+        area.y + area.height - panel_height,
+        area.width,
+        panel_height,
+    );
+    let Some(inner) = render_panel_shell(frame, panel, app.palette.accent, app.palette.panel_bg)
+    else {
+        return false;
+    };
+
+    // Name the panel on its own top border, the way the mode bar names PREFIX.
+    if panel.width > 10 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(" PREFIX ", key))),
+            Rect::new(panel.x + 2, panel.y, panel.width - 4, 1),
+        );
+    }
+
+    let mut lines: Vec<Line> = Vec::with_capacity(rows_needed + 2);
+    let last_title = columns.len() - 1;
+    lines.push(Line::from(
+        columns
+            .iter()
+            .enumerate()
+            .map(|(index, column)| {
+                let width = prefix_hint_cell_width(column.width, index == last_title);
+                Span::styled(pad_prefix_hint_cell(column.title, width), title_style)
+            })
+            .collect::<Vec<_>>(),
+    ));
+
+    let last_column = columns.len() - 1;
+    for row in 0..rows_needed {
+        let mut spans = Vec::with_capacity(columns.len() * 3);
+        for (index, column) in columns.iter().enumerate() {
+            let cell_width = prefix_hint_cell_width(column.width, index == last_column);
+            match column.entries.get(row) {
+                Some((keys, label)) => {
+                    spans.push(Span::styled(keys.clone(), key));
+                    spans.push(Span::styled(format!("  {label}"), dim));
+                    let used = keys.chars().count() + 2 + label.chars().count();
+                    if cell_width > used {
+                        spans.push(Span::raw(" ".repeat(cell_width - used)));
+                    }
+                }
+                None if index < last_column => spans.push(Span::raw(" ".repeat(cell_width))),
+                None => {}
+            }
+        }
+        lines.push(Line::from(spans));
+    }
+
+    lines.push(Line::default());
+    let prefix = crate::config::format_key_combo((app.prefix_code, app.prefix_mods));
+    lines.push(Line::from(vec![
+        Span::styled("esc", key),
+        Span::styled(" cancel   ", dim),
+        Span::styled(prefix, key),
+        Span::styled(" send prefix   ", dim),
+        Span::styled(prefix_rhs_label(&app.keybinds.help), key),
+        Span::styled(" all keybinds", dim),
+    ]));
+
+    frame.render_widget(Paragraph::new(lines), inner);
+    true
+}
+
+/// The gap belongs to every column but the last, which must not pad past the
+/// panel edge and wrap the line.
+fn prefix_hint_cell_width(column_width: u16, is_last: bool) -> usize {
+    let gap = if is_last { 0 } else { PREFIX_HINT_COLUMN_GAP };
+    column_width as usize + gap as usize
+}
+
+fn pad_prefix_hint_cell(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    if len >= width {
+        return text.chars().take(width).collect();
+    }
+    let mut padded = String::with_capacity(width);
+    padded.push_str(text);
+    padded.extend(std::iter::repeat_n(' ', width - len));
+    padded
+}
+
 pub(super) fn render_prefix_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    if app.prefix_hint_visible && render_prefix_hint_panel(app, frame, area) {
+        return;
+    }
+
     let key = Style::default()
         .fg(app.palette.accent)
         .add_modifier(Modifier::BOLD);

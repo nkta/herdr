@@ -334,6 +334,11 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Ask for a workspace name before interactive creation.
 # prompt_new_workspace_name = false
 
+# Delay before prefix mode lists its keybindings in a panel, in milliseconds.
+# Typing a known prefix chord faster than this never shows the panel.
+# Use 0 to show it immediately, or false to disable it.
+# prefix_hint_delay_ms = 400
+
 # Draw borders around split panes.
 # pane_borders = true
 

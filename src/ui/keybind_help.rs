@@ -59,6 +59,38 @@ fn indexed_range_prefix(bindings: &[crate::config::IndexedKeybind]) -> Option<&s
     Some(prefix)
 }
 
+/// Keybindings reachable from prefix mode, grouped for the prefix panel.
+///
+/// Derived from [`keybind_help_groups`] rather than listed again, so a new
+/// action shows up in the panel as soon as it appears in the help modal. The
+/// prefix itself is dropped from every label: the panel is only shown once the
+/// user is already holding prefix mode.
+pub(super) fn prefix_hint_groups(app: &AppState) -> Vec<HelpGroup> {
+    keybind_help_groups(app)
+        .into_iter()
+        .filter_map(|(title, entries)| {
+            let entries: Vec<HelpEntry> = entries
+                .into_iter()
+                .filter_map(|(keys, label)| Some((prefix_rhs_keys(&keys)?, label)))
+                .collect();
+            (!entries.is_empty()).then_some((title, entries))
+        })
+        .collect()
+}
+
+/// Keep the prefix-triggered alternatives of a help label, prefix stripped.
+///
+/// `None` when the action has no prefix binding at all, which drops direct
+/// chords and unset actions from the panel.
+fn prefix_rhs_keys(keys: &str) -> Option<String> {
+    let kept: Vec<&str> = keys
+        .split(" / ")
+        .filter_map(|part| part.trim().strip_prefix("prefix+"))
+        .filter(|part| !part.is_empty())
+        .collect();
+    (!kept.is_empty()).then(|| kept.join(" / "))
+}
+
 pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
     let kb = &app.keybinds;
     let mut groups = Vec::new();

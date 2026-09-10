@@ -6,7 +6,7 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 use super::{
     ActionKeybinds, BindingConfig, CommandKeybindConfig, IndexedKeybind, Keybinds, SidebarConfig,
     SoundConfig, TabBarRightEntryConfig, ThemeConfig, DEFAULT_MOBILE_WIDTH_THRESHOLD,
-    DEFAULT_MOUSE_SCROLL_LINES, DEFAULT_SCROLLBACK_LIMIT_BYTES,
+    DEFAULT_MOUSE_SCROLL_LINES, DEFAULT_PREFIX_HINT_DELAY_MS, DEFAULT_SCROLLBACK_LIMIT_BYTES,
 };
 
 pub const MAX_TOAST_DELAY_SECONDS: u64 = 3600;
@@ -859,6 +859,37 @@ pub enum TabBarPositionConfig {
     Bottom,
 }
 
+/// How long prefix mode waits before listing its keybindings.
+///
+/// Accepts a millisecond count or `false`. Typing through the prefix faster
+/// than the delay never shows the panel, so muscle memory keeps working the
+/// way it did before the panel existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum PrefixHintDelayConfig {
+    /// `false` disables the panel. `true` keeps the default delay.
+    Enabled(bool),
+    Millis(u64),
+}
+
+impl Default for PrefixHintDelayConfig {
+    fn default() -> Self {
+        Self::Millis(DEFAULT_PREFIX_HINT_DELAY_MS)
+    }
+}
+
+impl PrefixHintDelayConfig {
+    /// `None` when the panel is disabled.
+    pub fn delay(self) -> Option<std::time::Duration> {
+        let millis = match self {
+            Self::Enabled(false) => return None,
+            Self::Enabled(true) => DEFAULT_PREFIX_HINT_DELAY_MS,
+            Self::Millis(millis) => millis,
+        };
+        Some(std::time::Duration::from_millis(millis))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -891,6 +922,9 @@ pub struct UiConfig {
     pub prompt_new_tab_name: bool,
     /// Ask for a workspace name before interactive creation. Default: false.
     pub prompt_new_workspace_name: bool,
+    /// Delay before prefix mode lists its keybindings, in milliseconds.
+    /// `0` shows the panel immediately, `false` disables it. Default: 400.
+    pub prefix_hint_delay_ms: PrefixHintDelayConfig,
     /// Draw borders around split panes. Default: true.
     pub pane_borders: bool,
     /// Draw borders along the outside edge of the pane area. Default: true.
@@ -1131,6 +1165,7 @@ impl Default for UiConfig {
             confirm_close: true,
             prompt_new_tab_name: true,
             prompt_new_workspace_name: false,
+            prefix_hint_delay_ms: PrefixHintDelayConfig::default(),
             pane_borders: true,
             pane_outer_borders: true,
             pane_scrollbars: true,
@@ -1275,6 +1310,38 @@ preview_manifest_url = "https://example.test/preview.json"
         assert_eq!(
             config.update.preview_manifest_url.as_deref(),
             Some("https://example.test/preview.json")
+        );
+    }
+
+    #[test]
+    fn prefix_hint_delay_defaults_and_parses() {
+        use std::time::Duration;
+
+        assert_eq!(
+            Config::default().ui.prefix_hint_delay_ms.delay(),
+            Some(Duration::from_millis(DEFAULT_PREFIX_HINT_DELAY_MS))
+        );
+
+        let disabled: Config = toml::from_str("[ui]\nprefix_hint_delay_ms = false").unwrap();
+        assert_eq!(disabled.ui.prefix_hint_delay_ms.delay(), None);
+
+        let immediate: Config = toml::from_str("[ui]\nprefix_hint_delay_ms = 0").unwrap();
+        assert_eq!(
+            immediate.ui.prefix_hint_delay_ms.delay(),
+            Some(Duration::ZERO)
+        );
+
+        let custom: Config = toml::from_str("[ui]\nprefix_hint_delay_ms = 750").unwrap();
+        assert_eq!(
+            custom.ui.prefix_hint_delay_ms.delay(),
+            Some(Duration::from_millis(750))
+        );
+
+        // `true` is accepted as "keep the default", not as a millisecond count.
+        let enabled: Config = toml::from_str("[ui]\nprefix_hint_delay_ms = true").unwrap();
+        assert_eq!(
+            enabled.ui.prefix_hint_delay_ms.delay(),
+            Some(Duration::from_millis(DEFAULT_PREFIX_HINT_DELAY_MS))
         );
     }
 
