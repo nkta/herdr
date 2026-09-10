@@ -303,6 +303,23 @@ impl App {
         } else {
             None
         };
+        let update_installed = if let AppEvent::UpdateInstalled {
+            version,
+            exe_path,
+            target_protocol,
+        } = &ev
+        {
+            Some((version.clone(), exe_path.clone(), *target_protocol))
+        } else {
+            None
+        };
+        // The background install/check thread has finished either way.
+        if matches!(
+            ev,
+            AppEvent::UpdateReady { .. } | AppEvent::UpdateInstalled { .. }
+        ) {
+            self.auto_install_in_flight = false;
+        }
         let manifest_update_agents =
             if let AppEvent::AgentDetectionManifestsUpdated { activated, .. } = &ev {
                 Some(activated.clone())
@@ -312,8 +329,17 @@ impl App {
         let terminal_cwd_reported = matches!(ev, AppEvent::TerminalCwdReported { .. });
         let previous_toast = self.state.toast.clone();
         let mut pane_updates = self.state.handle_app_event(ev);
-        if update_ready.is_some() {
+        if update_ready.is_some() || update_installed.is_some() {
             self.state.latest_release_notes = crate::release_notes::load_latest();
+        }
+        if let Some((version, exe_path, target_protocol)) = update_installed {
+            self.pending_update_handoff =
+                Some(crate::app::update_handoff::PendingUpdateHandoff::new(
+                    version,
+                    exe_path,
+                    target_protocol,
+                ));
+            self.next_update_handoff_attempt = Some(Instant::now());
         }
         if checkpointed_pane_exit {
             self.finish_checkpointed_pane_exit();

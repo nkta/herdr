@@ -131,6 +131,13 @@ pub enum AppEvent {
         version: String,
         install_command: String,
     },
+    /// The background updater installed a new binary on disk; the server may
+    /// live-hand-off to it once no agent is working.
+    UpdateInstalled {
+        version: String,
+        exe_path: std::path::PathBuf,
+        target_protocol: Option<u32>,
+    },
     /// Remote agent detection manifest update check finished.
     AgentDetectionManifestsUpdated {
         updated: Vec<crate::detect::manifest_update::ManifestUpdateCommit>,

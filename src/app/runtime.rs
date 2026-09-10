@@ -94,6 +94,28 @@ impl App {
         }
     }
 
+    /// Spawn one background update check, choosing whether it may auto-install.
+    ///
+    /// Auto-install needs the config flag, live handoff support, and no handoff
+    /// already pending. A no-op when background update checks are disabled.
+    pub(crate) fn spawn_auto_update_check(&mut self) {
+        if !background_update_check_enabled(
+            self.policy.background_updates,
+            self.update_version_check_enabled,
+        ) {
+            return;
+        }
+
+        let auto_install = self.update_auto_install_enabled
+            && crate::platform::capabilities().live_handoff
+            && self.pending_update_handoff.is_none();
+        self.auto_install_in_flight = auto_install;
+
+        let update_tx = self.event_tx.clone();
+        let options = crate::update::AutoUpdateOptions { auto_install };
+        std::thread::spawn(move || crate::update::auto_update(update_tx, options));
+    }
+
     pub(crate) fn run_auto_update_check(&mut self) {
         if !background_update_check_enabled(
             self.policy.background_updates,
@@ -109,12 +131,11 @@ impl App {
             .is_none()
             .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL);
 
-        if self.state.update_available.is_some() {
+        if self.state.update_available.is_some() || self.auto_install_in_flight {
             return;
         }
 
-        let update_tx = self.event_tx.clone();
-        std::thread::spawn(move || crate::update::auto_update(update_tx));
+        self.spawn_auto_update_check();
     }
 
     pub(crate) fn run_agent_manifest_update_check(&mut self) {
@@ -156,6 +177,7 @@ impl App {
                 .flatten(),
             self.next_auto_update_check,
             self.next_agent_manifest_update_check,
+            self.next_update_handoff_attempt,
             self.agent_metadata_deadline,
             self.pending_agent_resume_deadline,
             self.session_save_deadline,

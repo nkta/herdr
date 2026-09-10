@@ -1162,6 +1162,15 @@ pub(crate) struct SelfUpdateOptions {
     pub(crate) live_handoff: bool,
 }
 
+/// How the background update check should behave once it finds a newer build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AutoUpdateOptions {
+    /// Download, verify, and install the new binary, then emit
+    /// `AppEvent::UpdateInstalled` so the server can live-hand-off to it.
+    /// When false (or the install fails) the check only notifies.
+    pub auto_install: bool,
+}
+
 pub(crate) fn parse_self_update_args(args: &[String]) -> Result<SelfUpdateOptions, String> {
     let mut options = SelfUpdateOptions::default();
     for arg in args {
@@ -2293,9 +2302,18 @@ fn print_outdated_integration_notice_with_updated_binary(updated_exe: &Path) {
     }
 }
 
-/// Background update check: only surface availability and release notes.
-/// Runs in a background thread at startup.
-pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
+/// Background update check.
+///
+/// With `options.auto_install` off it only surfaces availability and release
+/// notes (`AppEvent::UpdateReady`). With it on, and when the install is not
+/// package-manager-managed and the endpoint generation is unchanged, it also
+/// downloads, verifies, and installs the new binary and emits
+/// `AppEvent::UpdateInstalled`; on any install failure it falls back to
+/// `AppEvent::UpdateReady`. Runs in a background thread.
+pub fn auto_update(
+    events: tokio::sync::mpsc::Sender<crate::events::AppEvent>,
+    options: AutoUpdateOptions,
+) {
     crate::logging::update_check_started();
     if let Ok(version) = env::var(FAKE_UPDATE_VERSION_ENV) {
         let version = version.trim();
@@ -2361,6 +2379,28 @@ pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
         tracing::warn!("failed to save pending release notes: {e}");
     }
 
+    #[cfg(not(windows))]
+    if options.auto_install && auto_install_release_is_eligible(&release) {
+        match download_and_install_release(&release) {
+            Ok(installed) => {
+                crate::logging::update_installed(release.label());
+                // blocking_send is safe from a std::thread
+                let _ = events.blocking_send(crate::events::AppEvent::UpdateInstalled {
+                    version: release.label().to_string(),
+                    exe_path: installed.exe_path,
+                    target_protocol: release.target_protocol,
+                });
+                return;
+            }
+            Err(err) => {
+                crate::logging::update_auto_install_failed(&err);
+                // Fall through to the notify-only path below.
+            }
+        }
+    }
+    #[cfg(windows)]
+    let _ = options;
+
     tracing::info!(
         "auto-update check: {} available, waiting for explicit install",
         release.label()
@@ -2371,6 +2411,52 @@ pub fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
         version: release.label().to_string(),
         install_command: update_install_command().to_string(),
     });
+}
+
+/// Whether an eligible release should be auto-installed rather than only announced.
+///
+/// Package-manager installs are updated through their manager, and a release
+/// that bumps the endpoint protocol generation needs a client restart — both
+/// stay on the manual `herdr update` path.
+#[cfg(not(windows))]
+fn auto_install_release_is_eligible(release: &ReleaseInfo) -> bool {
+    let Ok(current_exe) = env::current_exe() else {
+        return false;
+    };
+    auto_install_allowed_for_exe_path(&current_exe) && endpoint_generation_compatible(release)
+}
+
+/// The install path is a direct install we may replace in place.
+#[cfg(not(windows))]
+fn auto_install_allowed_for_exe_path(path: &Path) -> bool {
+    !is_package_manager_managed_exe_path(path)
+}
+
+/// The release speaks the endpoint generation this build already speaks, so a
+/// live handoff keeps existing clients compatible without a restart.
+#[cfg(not(windows))]
+fn endpoint_generation_compatible(release: &ReleaseInfo) -> bool {
+    match release.target_endpoint_generation {
+        None => true,
+        Some(generation) => generation == crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION,
+    }
+}
+
+/// Result of a completed background install: the on-disk path of the new binary.
+#[cfg(not(windows))]
+pub(crate) struct InstalledUpdate {
+    pub(crate) exe_path: PathBuf,
+}
+
+/// Download, verify, and atomically install a release. No CLI guards, no prompts.
+#[cfg(not(windows))]
+fn download_and_install_release(release: &ReleaseInfo) -> Result<InstalledUpdate, String> {
+    let downloaded = download_update(release)?;
+    // Capture the install path before the rename — afterwards
+    // `env::current_exe()` on Linux resolves to `<path> (deleted)`.
+    let exe_path = downloaded.current_exe.clone();
+    install_downloaded_update(downloaded)?;
+    Ok(InstalledUpdate { exe_path })
 }
 
 fn auto_update_homebrew(events: tokio::sync::mpsc::Sender<crate::events::AppEvent>) {
@@ -2950,6 +3036,39 @@ mod tests {
             ..release
         };
         assert!(update_requires_server_restart(&compatible, &future_release));
+    }
+
+    #[test]
+    fn auto_install_allowed_for_exe_path_rejects_package_managed_paths() {
+        assert!(auto_install_allowed_for_exe_path(Path::new(
+            "/home/user/.local/bin/herdr"
+        )));
+        assert!(!auto_install_allowed_for_exe_path(Path::new(
+            "/nix/store/abc123-herdr/bin/herdr"
+        )));
+        assert!(!auto_install_allowed_for_exe_path(Path::new(
+            "/home/linuxbrew/.linuxbrew/Cellar/herdr/1.0/bin/herdr"
+        )));
+    }
+
+    #[test]
+    fn endpoint_generation_compatible_rejects_a_newer_generation() {
+        let same = fake_release("9.9.9", Some(3));
+        assert!(endpoint_generation_compatible(&same));
+
+        let unknown = ReleaseInfo {
+            target_endpoint_generation: None,
+            ..same.clone()
+        };
+        assert!(endpoint_generation_compatible(&unknown));
+
+        let newer = ReleaseInfo {
+            target_endpoint_generation: Some(
+                crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION + 1,
+            ),
+            ..same
+        };
+        assert!(!endpoint_generation_compatible(&newer));
     }
 
     #[test]

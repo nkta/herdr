@@ -136,6 +136,12 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # stable_manifest_url = "https://example.com/latest.json"
 # preview_manifest_url = "https://example.com/preview.json"
 
+# Install a found update in the background and hand running panes off to the
+# updated server once no agent is working. Requires a direct install (not
+# Homebrew, mise, or Nix) and live handoff support (Unix). Left off, Herdr only
+# notifies that an update is ready.
+# auto_install = false
+
 [keys]
 # Prefix key to enter prefix mode (default: "ctrl+b")
 # Examples: "ctrl+b", "f12", "esc", "-"

@@ -370,6 +370,58 @@ pub(crate) fn update_available(version: &str) {
     );
 }
 
+pub(crate) fn update_installed(version: &str) {
+    tracing::info!(
+        event = "update.install.complete",
+        subsystem = "update",
+        outcome = "ok",
+        version,
+        "update installed"
+    );
+}
+
+pub(crate) fn update_auto_install_failed(err: &str) {
+    tracing::warn!(
+        event = "update.install.complete",
+        subsystem = "update",
+        outcome = "error",
+        err,
+        "automatic update install failed"
+    );
+}
+
+pub(crate) fn update_handoff_blocked(version: &str, reason: &str) {
+    tracing::debug!(
+        event = "update.handoff.blocked",
+        subsystem = "update",
+        outcome = "deferred",
+        version,
+        reason,
+        "update handoff deferred"
+    );
+}
+
+pub(crate) fn update_handoff_started(version: &str) {
+    tracing::info!(
+        event = "update.handoff.start",
+        subsystem = "update",
+        outcome = "started",
+        version,
+        "update handoff started"
+    );
+}
+
+pub(crate) fn update_handoff_failed(version: &str, err: &str) {
+    tracing::warn!(
+        event = "update.handoff.complete",
+        subsystem = "update",
+        outcome = "error",
+        version,
+        err,
+        "update handoff failed"
+    );
+}
+
 pub(crate) fn integration_action(
     action: &'static str,
     target: &'static str,

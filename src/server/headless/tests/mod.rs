@@ -6114,6 +6114,118 @@ fn update_notification_is_semantic_for_system_delivery() {
 }
 
 #[test]
+fn update_installed_notification_is_semantic() {
+    let mut server = test_headless_server();
+    let (client_tx, client_control_rx, _client_rx) = test_client_writer();
+
+    server.clients.insert(
+        1,
+        ClientConnection::new(
+            (80, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::SemanticFrame,
+            Some(client_tx),
+        ),
+    );
+    server.foreground_client_id = Some(1);
+    server.app.state.toast_config.delivery = crate::config::ToastDelivery::System;
+
+    let changed = server.handle_internal_event_with_forwarding(AppEvent::UpdateInstalled {
+        version: "9.9.9".to_string(),
+        exe_path: "/home/user/.local/bin/herdr".into(),
+        target_protocol: Some(21),
+    });
+
+    assert!(changed);
+    match read_server_message(
+        client_control_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("semantic update notification"),
+    ) {
+        ServerMessage::SemanticNotification(notification) => {
+            assert_eq!(
+                notification.kind,
+                protocol::SemanticNotificationKind::UpdateInstalled
+            );
+            assert_eq!(notification.title, "Herdr v9.9.9 installed");
+            assert_eq!(
+                notification.body.as_deref(),
+                Some("hands off to the updated server when agents are idle")
+            );
+        }
+        other => panic!("expected semantic update notification, got {other:?}"),
+    }
+    // The installed update is parked for the scheduler to hand off later.
+    assert!(server.app.pending_update_handoff.is_some());
+    assert!(server.app.next_update_handoff_attempt.is_some());
+}
+
+#[test]
+fn scheduled_update_handoff_waits_while_an_agent_is_working() {
+    let mut server = test_headless_server();
+    let terminal_id = crate::terminal::TerminalId::alloc();
+    let mut terminal = crate::terminal::TerminalState::new(terminal_id.clone(), "/tmp".into());
+    terminal.detected_agent = Some(crate::detect::Agent::Claude);
+    terminal.state = crate::detect::AgentState::Working;
+    server.app.state.terminals.insert(terminal_id, terminal);
+
+    server.app.pending_update_handoff =
+        Some(crate::app::update_handoff::PendingUpdateHandoff::new(
+            "9.9.9".to_string(),
+            "/home/user/.local/bin/herdr".into(),
+            Some(21),
+        ));
+    let now = std::time::Instant::now();
+    server.app.next_update_handoff_attempt = Some(now);
+
+    server.handle_scheduled_tasks_headless(now, false);
+
+    assert!(!server.shutting_down);
+    assert!(server.app.pending_update_handoff.is_some());
+    let retry = server
+        .app
+        .next_update_handoff_attempt
+        .expect("handoff attempt re-armed");
+    assert!(retry > now, "the blocked handoff should be retried later");
+    assert_eq!(
+        server
+            .app
+            .pending_update_handoff
+            .as_ref()
+            .map(|pending| pending.clear_probes),
+        Some(0)
+    );
+}
+
+#[test]
+fn scheduled_update_handoff_requires_consecutive_clear_probes() {
+    let mut server = test_headless_server();
+    server.app.pending_update_handoff =
+        Some(crate::app::update_handoff::PendingUpdateHandoff::new(
+            "9.9.9".to_string(),
+            "/home/user/.local/bin/herdr".into(),
+            Some(21),
+        ));
+    let now = std::time::Instant::now();
+    server.app.next_update_handoff_attempt = Some(now);
+
+    server.handle_scheduled_tasks_headless(now, false);
+
+    // First clear probe: still not enough to commit the handoff.
+    assert!(!server.shutting_down);
+    assert_eq!(
+        server
+            .app
+            .pending_update_handoff
+            .as_ref()
+            .map(|pending| pending.clear_probes),
+        Some(1)
+    );
+    assert!(server.app.next_update_handoff_attempt.is_some());
+}
+
+#[test]
 fn notification_show_api_forwards_one_semantic_client_notification() {
     let mut server = test_headless_server();
     let (client_tx, client_control_rx, _client_rx) = test_client_writer();

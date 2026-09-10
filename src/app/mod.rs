@@ -26,6 +26,7 @@ mod tab_bar_status;
 mod terminal_targets;
 mod terminal_titles;
 mod theme_sync;
+pub(crate) mod update_handoff;
 mod window_title;
 mod worktrees;
 
@@ -133,6 +134,12 @@ pub struct App {
     pub(crate) next_agent_manifest_update_check: Option<Instant>,
     pub(crate) update_version_check_enabled: bool,
     pub(crate) update_manifest_check_enabled: bool,
+    pub(crate) update_auto_install_enabled: bool,
+    /// An `auto_update` thread is currently downloading/installing a release.
+    pub(crate) auto_install_in_flight: bool,
+    /// An installed update waiting for a safe moment to take over the session.
+    pub(crate) pending_update_handoff: Option<update_handoff::PendingUpdateHandoff>,
+    pub(crate) next_update_handoff_attempt: Option<Instant>,
     pub(crate) loaded_host_cursor: crate::config::HostCursorModeConfig,
     pub(crate) agent_metadata_deadline: Option<Instant>,
     pub(crate) pending_agent_resume_deadline: Option<Instant>,
@@ -543,10 +550,6 @@ impl App {
             policy.background_updates,
             config.update.manifest_check,
         );
-        if version_check_enabled {
-            let update_tx = event_tx.clone();
-            std::thread::spawn(move || crate::update::auto_update(update_tx));
-        }
         if manifest_check_enabled {
             let manifest_update_tx = event_tx.clone();
             std::thread::spawn(move || {
@@ -594,6 +597,10 @@ impl App {
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
             update_version_check_enabled: config.update.version_check,
             update_manifest_check_enabled: config.update.manifest_check,
+            update_auto_install_enabled: config.update.auto_install,
+            auto_install_in_flight: false,
+            pending_update_handoff: None,
+            next_update_handoff_attempt: None,
             loaded_host_cursor: config.ui.host_cursor,
             agent_metadata_deadline: None,
             pending_agent_resume_deadline: None,
@@ -623,6 +630,7 @@ impl App {
         };
         app.configure_tab_bar_status(&config.ui.tab_bar_right, &config.ui.tab_bar_right_separator);
         app.configure_window_title(&config.ui.window_title);
+        app.spawn_auto_update_check();
         app
     }
 
@@ -894,8 +902,10 @@ impl App {
             let now = Instant::now();
             let previous_version_check_enabled = self.update_version_check_enabled;
             let previous_manifest_check_enabled = self.update_manifest_check_enabled;
+            let previous_auto_install_enabled = self.update_auto_install_enabled;
             self.update_version_check_enabled = config.update.version_check;
             self.update_manifest_check_enabled = config.update.manifest_check;
+            self.update_auto_install_enabled = config.update.auto_install;
 
             if !self.update_version_check_enabled {
                 self.next_auto_update_check = None;
@@ -907,6 +917,23 @@ impl App {
                 && self.state.update_available.is_none()
             {
                 self.next_auto_update_check = Some(now);
+            }
+
+            if !self.update_auto_install_enabled {
+                // Turning auto-install off cancels a handoff that has not started.
+                self.pending_update_handoff = None;
+                self.next_update_handoff_attempt = None;
+            } else if !previous_auto_install_enabled
+                && background_update_check_enabled(
+                    self.policy.background_updates,
+                    self.update_version_check_enabled,
+                )
+                && self.state.update_available.is_some()
+                && !self.auto_install_in_flight
+                && self.pending_update_handoff.is_none()
+            {
+                // An update was already found; install it now that we may.
+                self.spawn_auto_update_check();
             }
 
             if !self.update_manifest_check_enabled {
@@ -1534,6 +1561,97 @@ mod tests {
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn update_installed_event_arms_a_handoff_attempt() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("update-installed-arms-handoff");
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+        let mut app = test_app();
+        app.auto_install_in_flight = true;
+
+        app.handle_internal_event(AppEvent::UpdateInstalled {
+            version: "1.2.3".into(),
+            exe_path: "/home/user/.local/bin/herdr".into(),
+            target_protocol: Some(21),
+        });
+
+        assert_eq!(app.state.update_available.as_deref(), Some("1.2.3"));
+        assert!(!app.auto_install_in_flight);
+        let pending = app
+            .pending_update_handoff
+            .as_ref()
+            .expect("pending update handoff");
+        assert_eq!(pending.version, "1.2.3");
+        assert_eq!(pending.target_protocol, Some(21));
+        assert_eq!(pending.clear_probes, 0);
+        assert!(app.next_update_handoff_attempt.is_some());
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn next_headless_loop_deadline_includes_the_update_handoff_attempt() {
+        let mut app = test_app();
+        app.next_auto_update_check = None;
+        app.next_agent_manifest_update_check = None;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        app.next_update_handoff_attempt = Some(deadline);
+
+        assert_eq!(
+            app.next_headless_loop_deadline_with_git_refresh(Instant::now(), false, false),
+            Some(deadline)
+        );
+    }
+
+    #[test]
+    fn reload_config_disabling_auto_install_cancels_a_pending_handoff() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-disable-auto-install");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[update]\nauto_install = false\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        app.update_auto_install_enabled = true;
+        app.pending_update_handoff = Some(update_handoff::PendingUpdateHandoff::new(
+            "9.9.9".into(),
+            "/home/user/.local/bin/herdr".into(),
+            Some(21),
+        ));
+        app.next_update_handoff_attempt = Some(Instant::now());
+
+        let report = app.reload_config();
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert!(!app.update_auto_install_enabled);
+        assert!(app.pending_update_handoff.is_none());
+        assert!(app.next_update_handoff_attempt.is_none());
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn record_update_handoff_failure_keeps_update_available_and_clears_pending() {
+        let mut app = test_app();
+        app.state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        app.state.update_available = Some("9.9.9".into());
+        app.pending_update_handoff = Some(update_handoff::PendingUpdateHandoff::new(
+            "9.9.9".into(),
+            "/home/user/.local/bin/herdr".into(),
+            Some(21),
+        ));
+        app.next_update_handoff_attempt = Some(Instant::now());
+
+        app.record_update_handoff_failure("9.9.9", "boom");
+
+        assert_eq!(app.state.update_available.as_deref(), Some("9.9.9"));
+        assert!(app.pending_update_handoff.is_none());
+        assert!(app.next_update_handoff_attempt.is_none());
+        let toast = app.state.toast.as_ref().expect("failure toast");
+        assert_eq!(toast.title, "v9.9.9 handoff failed");
     }
 
     #[test]

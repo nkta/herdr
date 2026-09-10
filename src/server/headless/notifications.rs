@@ -605,6 +605,48 @@ impl HeadlessServer {
 
                 true
             }
+            AppEvent::UpdateInstalled { version, .. } => {
+                let toast_before = self.app.state.toast.clone();
+                let version = version.clone();
+
+                self.app.handle_internal_event(ev);
+                self.send_to_client_shells(ServerMessage::SemanticNotification(
+                    protocol::SemanticNotification {
+                        kind: protocol::SemanticNotificationKind::UpdateInstalled,
+                        title: format!("Herdr v{version} installed"),
+                        body: Some(
+                            "hands off to the updated server when agents are idle".to_string(),
+                        ),
+                        sound: None,
+                        agent: None,
+                        workspace_id: None,
+                        tab_id: None,
+                        pane_id: None,
+                        position: None,
+                    },
+                ));
+
+                if should_forward_toast_to_clients(self.app.state.toast_config.delivery)
+                    && self.app.state.toast.is_some()
+                    && self.app.state.toast != toast_before
+                {
+                    if let Some(msg) = self
+                        .app
+                        .state
+                        .toast
+                        .as_ref()
+                        .map(|toast| format!("{}: {}", toast.title, toast.context))
+                    {
+                        self.send_flat_toast_to_foreground_client(
+                            toast_notify_kind(self.app.state.toast_config.delivery)
+                                .expect("toast forwarding requires a client notification kind"),
+                            msg,
+                        );
+                    }
+                }
+
+                true
+            }
             AppEvent::WorktreeAddFinished(result) => {
                 let deferred_request_id = result
                     .api_request

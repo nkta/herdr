@@ -3352,6 +3352,14 @@ impl HeadlessServer {
 
         if self
             .app
+            .next_update_handoff_attempt
+            .is_some_and(|deadline| now >= deadline)
+        {
+            changed |= self.run_pending_update_handoff(now);
+        }
+
+        if self
+            .app
             .session_save_deadline
             .is_some_and(|deadline| now >= deadline)
         {

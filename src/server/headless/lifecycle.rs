@@ -234,6 +234,96 @@ impl HeadlessServer {
         info!("live handoff completed; old server exiting");
     }
 
+    /// Live-hand-off to an auto-installed update once no agent is working.
+    ///
+    /// Driven by `next_update_handoff_attempt` from the headless scheduler.
+    /// Returns whether it changed state enough to warrant a re-render. On a
+    /// successful handoff the run loop exits on its next `shutting_down` check.
+    pub(super) fn run_pending_update_handoff(&mut self, now: Instant) -> bool {
+        use crate::app::update_handoff::{
+            update_handoff_blocker, UPDATE_HANDOFF_RETRY_INTERVAL, UPDATE_HANDOFF_SETTLE_INTERVAL,
+            UPDATE_HANDOFF_SETTLE_PROBES,
+        };
+
+        let Some(pending) = self.app.pending_update_handoff.as_ref() else {
+            self.app.next_update_handoff_attempt = None;
+            return false;
+        };
+        let version = pending.version.clone();
+        let exe_path = pending.exe_path.clone();
+        let target_protocol = pending.target_protocol;
+
+        if let Some(blocker) = update_handoff_blocker(&self.app.state, self.handoff_in_progress) {
+            let pending = self
+                .app
+                .pending_update_handoff
+                .as_mut()
+                .expect("pending update handoff checked just above");
+            pending.clear_probes = 0;
+            if pending.blocked_logged {
+                crate::logging::update_handoff_blocked(&version, blocker.as_str());
+            } else {
+                pending.blocked_logged = true;
+                info!(
+                    version = %version,
+                    reason = blocker.as_str(),
+                    "update handoff deferred until it is safe"
+                );
+            }
+            self.app.next_update_handoff_attempt = Some(now + UPDATE_HANDOFF_RETRY_INTERVAL);
+            return false;
+        }
+
+        // Clear reading. Agent state flickers at tool-call boundaries, so wait
+        // for consecutive clear probes before committing.
+        {
+            let pending = self
+                .app
+                .pending_update_handoff
+                .as_mut()
+                .expect("pending update handoff checked just above");
+            pending.blocked_logged = false;
+            pending.clear_probes = pending.clear_probes.saturating_add(1);
+            if pending.clear_probes < UPDATE_HANDOFF_SETTLE_PROBES {
+                self.app.next_update_handoff_attempt = Some(now + UPDATE_HANDOFF_SETTLE_INTERVAL);
+                return false;
+            }
+        }
+
+        self.app.next_update_handoff_attempt = None;
+        crate::logging::update_handoff_started(&version);
+        self.send_to_client_shells(ServerMessage::SemanticNotification(
+            protocol::SemanticNotification {
+                kind: protocol::SemanticNotificationKind::UpdateInstalled,
+                title: format!("Herdr v{version} installed"),
+                body: Some("reconnecting to the updated server".to_string()),
+                sound: None,
+                agent: None,
+                workspace_id: None,
+                tab_id: None,
+                pane_id: None,
+                position: None,
+            },
+        ));
+
+        match self.perform_live_handoff(crate::api::schema::ServerLiveHandoffParams {
+            import_exe: Some(exe_path.display().to_string()),
+            expected_protocol: target_protocol,
+            expected_version: Some(version.clone()),
+        }) {
+            Ok(()) => {
+                self.app.pending_update_handoff = None;
+                self.finish_live_handoff_shutdown();
+                true
+            }
+            Err(err) => {
+                self.app
+                    .record_update_handoff_failure(&version, &err.to_string());
+                true
+            }
+        }
+    }
+
     #[cfg(not(unix))]
     pub(super) fn perform_live_handoff(
         &mut self,

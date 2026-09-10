@@ -40,6 +40,10 @@ pub struct UpdateConfig {
     /// Override the hosted preview update manifest, for forks and self-hosted
     /// builds that publish their own `preview.json`. `None` keeps herdr.dev.
     pub preview_manifest_url: Option<String>,
+    /// Install a found update in the background and live-hand-off running panes
+    /// to the new server once no agent is working. Requires a direct install
+    /// (not Homebrew, mise, or Nix) and live handoff support (Unix).
+    pub auto_install: bool,
 }
 
 impl Default for UpdateConfig {
@@ -50,6 +54,7 @@ impl Default for UpdateConfig {
             manifest_check: true,
             stable_manifest_url: None,
             preview_manifest_url: None,
+            auto_install: false,
         }
     }
 }
@@ -1371,6 +1376,14 @@ manifest_check = false
             Some("https://example.test/preview.json")
         );
         assert_eq!(config.update.stable_manifest_url, None);
+    }
+
+    #[test]
+    fn update_auto_install_defaults_false_and_parses() {
+        assert!(!Config::default().update.auto_install);
+
+        let config: Config = toml::from_str("[update]\nauto_install = true").unwrap();
+        assert!(config.update.auto_install);
     }
 
     #[test]

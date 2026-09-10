@@ -1616,6 +1616,24 @@ impl AppState {
                 }
                 Vec::new()
             }
+            AppEvent::UpdateInstalled { version, .. } => {
+                self.update_available = Some(version.clone());
+                self.latest_release_notes_available = true;
+                self.update_dismissed = true;
+                if matches!(
+                    self.toast_config.delivery,
+                    crate::config::ToastDelivery::Herdr
+                ) {
+                    self.toast = Some(ToastNotification {
+                        kind: ToastKind::UpdateInstalled,
+                        title: format!("v{version} installed"),
+                        context: "hands off to the updated server when agents are idle".to_string(),
+                        position: None,
+                        target: None,
+                    });
+                }
+                Vec::new()
+            }
             AppEvent::AgentDetectionManifestsUpdated {
                 updated, status, ..
             } => {
@@ -3826,6 +3844,30 @@ mod tests {
         assert_eq!(
             toast.context,
             "detach, run `brew update && brew upgrade herdr`, then run Herdr again to reconnect"
+        );
+    }
+
+    #[test]
+    fn update_installed_sets_auto_handoff_toast() {
+        let mut state = AppState::test_new();
+        state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+
+        let updates = state.handle_app_event(AppEvent::UpdateInstalled {
+            version: "0.6.0".into(),
+            exe_path: "/home/user/.local/bin/herdr".into(),
+            target_protocol: Some(21),
+        });
+
+        assert!(updates.is_empty());
+        assert_eq!(state.update_available.as_deref(), Some("0.6.0"));
+        assert!(state.latest_release_notes_available);
+        assert!(state.update_dismissed);
+        let toast = state.toast.as_ref().expect("update toast");
+        assert_eq!(toast.kind, ToastKind::UpdateInstalled);
+        assert_eq!(toast.title, "v0.6.0 installed");
+        assert_eq!(
+            toast.context,
+            "hands off to the updated server when agents are idle"
         );
     }
 

@@ -480,6 +480,12 @@
           "type": "string",
           "default": "unset (herdr.dev)",
           "description": "Preview update manifest to check instead of the hosted herdr.dev one, for forks and self-hosted builds that publish their own preview.json. Only https:// URLs are accepted. The HERDR_PREVIEW_MANIFEST_URL environment variable overrides it."
+        },
+        {
+          "key": "update.auto_install",
+          "type": "boolean",
+          "default": "false",
+          "description": "Install a found update in the background and hand running panes off to the updated server once no agent is working. Requires a direct install (not Homebrew, mise, or Nix) and live handoff support (Unix). Left off, Herdr only notifies that an update is ready."
         }
       ]
     },
