@@ -2,19 +2,19 @@
   "schema_version": 1,
   "channel": "preview",
   "base_version": "0.9.0",
-  "build_id": "2026-09-10-3df614be5a34",
-  "commit": "3df614be5a34f2800f83867bdafedf86425e366f",
-  "built_at": "2026-09-10T21:44:43Z",
+  "build_id": "2026-09-11-88545d25613d",
+  "commit": "88545d25613dd24754ffb853fdeff023ee39e4ae",
+  "built_at": "2026-09-11T00:05:59Z",
   "protocol": 22,
-  "notes": "Fork build 2026-09-10-3df614be5a34\n\nBuilt from `3df614be5a34` on `master` of nkta/herdr.\nBase stable: v0.9.0\nRelease: https://github.com/nkta/herdr/releases/tag/fork-20260910-2144-3df614b\n\n### Changed\n- Rebuilt from the current fork master branch.\n",
+  "notes": "Fork build 2026-09-11-88545d25613d\n\nBuilt from `88545d25613d` on `master` of nkta/herdr.\nBase stable: v0.9.0\nRelease: https://github.com/nkta/herdr/releases/tag/fork-20260911-0005-88545d2\n\n### Changed\n- Rebuilt from the current fork master branch.\n",
   "assets": {
     "linux-x86_64": {
-      "url": "https://github.com/nkta/herdr/releases/download/fork-20260910-2144-3df614b/herdr-linux-x86_64",
-      "sha256": "e410834e9022fe98ca9df2523a2a83a572f6394bba6ad7b77e4b2e5499ae8c04"
+      "url": "https://github.com/nkta/herdr/releases/download/fork-20260911-0005-88545d2/herdr-linux-x86_64",
+      "sha256": "56ab64f616395e411912a274c61b169d25a1cc13ae18448828af837c86548af1"
     },
     "linux-aarch64": {
-      "url": "https://github.com/nkta/herdr/releases/download/fork-20260910-2144-3df614b/herdr-linux-aarch64",
-      "sha256": "63fc6d2e768bca350de200fd3df1e41cfaa49e9690894864b036dd973e3a4611"
+      "url": "https://github.com/nkta/herdr/releases/download/fork-20260911-0005-88545d2/herdr-linux-aarch64",
+      "sha256": "4d0e022aa1998fe087cfe7f13d3889808e1c17ac9fca0b2b4609cd6c6ca660f6"
     }
   }
 }
