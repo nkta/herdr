@@ -672,10 +672,35 @@ impl Drop for DownloadedUpdate {
     }
 }
 
+/// The path of the running binary, install target for an in-place update.
+///
+/// A server that has already been through a live handoff runs from a replaced
+/// (unlinked) inode, so on Linux `/proc/self/exe` — and thus `current_exe()` —
+/// reads back as `<path> (deleted)`. The real path is the part before that
+/// suffix, and that is where the next binary must land.
+#[cfg(not(windows))]
+fn resolved_current_exe() -> Result<PathBuf, String> {
+    let current_exe = env::current_exe().map_err(|e| format!("can't find current binary: {e}"))?;
+    Ok(strip_deleted_exe_suffix(current_exe))
+}
+
+/// Drop the trailing ` (deleted)` Linux appends to `/proc/self/exe` once the
+/// running binary has been replaced.
+#[cfg(not(windows))]
+fn strip_deleted_exe_suffix(path: PathBuf) -> PathBuf {
+    match path
+        .to_str()
+        .and_then(|text| text.strip_suffix(" (deleted)"))
+    {
+        Some(real) => PathBuf::from(real),
+        None => path,
+    }
+}
+
 /// Download a release to a prepared executable temp file without touching the running server.
 #[cfg(not(windows))]
 fn download_update(release: &ReleaseInfo) -> Result<DownloadedUpdate, String> {
-    let current_exe = env::current_exe().map_err(|e| format!("can't find current binary: {e}"))?;
+    let current_exe = resolved_current_exe()?;
 
     let parent = current_exe.parent().ok_or("can't find binary directory")?;
 
@@ -2420,7 +2445,7 @@ pub fn auto_update(
 /// stay on the manual `herdr update` path.
 #[cfg(not(windows))]
 fn auto_install_release_is_eligible(release: &ReleaseInfo) -> bool {
-    let Ok(current_exe) = env::current_exe() else {
+    let Ok(current_exe) = resolved_current_exe() else {
         return false;
     };
     auto_install_allowed_for_exe_path(&current_exe) && endpoint_generation_compatible(release)
@@ -2452,8 +2477,8 @@ pub(crate) struct InstalledUpdate {
 #[cfg(not(windows))]
 fn download_and_install_release(release: &ReleaseInfo) -> Result<InstalledUpdate, String> {
     let downloaded = download_update(release)?;
-    // Capture the install path before the rename — afterwards
-    // `env::current_exe()` on Linux resolves to `<path> (deleted)`.
+    // `current_exe` here is the resolved install path (see `resolved_current_exe`),
+    // captured before the rename consumes `downloaded`.
     let exe_path = downloaded.current_exe.clone();
     install_downloaded_update(downloaded)?;
     Ok(InstalledUpdate { exe_path })
@@ -3049,6 +3074,18 @@ mod tests {
         assert!(!auto_install_allowed_for_exe_path(Path::new(
             "/home/linuxbrew/.linuxbrew/Cellar/herdr/1.0/bin/herdr"
         )));
+    }
+
+    #[test]
+    fn strip_deleted_exe_suffix_recovers_the_real_install_path() {
+        assert_eq!(
+            strip_deleted_exe_suffix(PathBuf::from("/home/user/.local/bin/herdr (deleted)")),
+            PathBuf::from("/home/user/.local/bin/herdr")
+        );
+        assert_eq!(
+            strip_deleted_exe_suffix(PathBuf::from("/home/user/.local/bin/herdr")),
+            PathBuf::from("/home/user/.local/bin/herdr")
+        );
     }
 
     #[test]
