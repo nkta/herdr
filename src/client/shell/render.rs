@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "../shell/git_panel.rs"]
+mod git_panel;
 #[path = "../shell/overlays.rs"]
 mod overlays;
 #[path = "../shell/sidebar.rs"]
@@ -228,6 +230,8 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) reveal_navigation_workspace: &'a mut bool,
     pub(super) dragged_workspace_id: Option<&'a str>,
     pub(super) workspace_drop_indicator_row: Option<u16>,
+    pub(super) sidebar_view: SidebarSpacesView,
+    pub(super) git_panel: &'a ClientGitPanelState,
 }
 
 pub(super) fn render_shell(

@@ -199,17 +199,183 @@ pub(crate) fn render_sidebar(
         crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
     hits.sidebar_section_divider =
         crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
+    render_spaces_git_tabs(buffer, workspace_area, state.sidebar_view, palette, hits);
+
+    if state.sidebar_view == SidebarSpacesView::Git {
+        let focused_workspace = snapshot
+            .focused_workspace_id
+            .as_deref()
+            .and_then(|id| snapshot.workspaces.iter().find(|ws| ws.workspace_id == id));
+        let body = Rect::new(
+            workspace_area.x,
+            workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
+            workspace_area.width,
+            workspace_area
+                .height
+                .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
+        );
+        hits.workspace_body = body;
+        hits.git_panel_rows = super::git_panel::render_git_panel(
+            buffer,
+            body,
+            focused_workspace,
+            state.git_panel,
+            palette,
+        );
+    } else {
+        render_spaces_body(
+            buffer,
+            workspace_area,
+            snapshot,
+            config,
+            state,
+            hits,
+            palette,
+        );
+    }
+
+    let footer_y = workspace_area.bottom().saturating_sub(1);
+    if config.mouse_capture {
+        render_sidebar_footer(buffer, workspace_area, footer_y, snapshot, palette, hits);
+    }
+
+    super::render_agent_panel(
+        buffer,
+        detail_area,
+        snapshot,
+        config,
+        state.agent_scroll,
+        hits,
+    );
+
+    hits.sidebar_toggle = Rect::new(
+        area.right().saturating_sub(2),
+        area.bottom().saturating_sub(1),
+        u16::from(area.width > 1),
+        u16::from(area.height > 0),
+    );
+    put_text(
+        buffer,
+        hits.sidebar_toggle.x,
+        hits.sidebar_toggle.y,
+        hits.sidebar_toggle.width,
+        "«",
+        Style::default().fg(palette.overlay0),
+    );
+}
+
+fn render_spaces_git_tabs(
+    buffer: &mut Buffer,
+    workspace_area: Rect,
+    active_view: SidebarSpacesView,
+    palette: &Palette,
+    hits: &mut ShellHitMap,
+) {
+    let tab_style = |active: bool| {
+        if active {
+            Style::default()
+                .fg(palette.text)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(palette.overlay0)
+        }
+    };
+    let spaces_label = " spaces";
+    let spaces_width = (spaces_label.len() as u16).min(workspace_area.width);
+    hits.spaces_tab = Rect::new(workspace_area.x, workspace_area.y, spaces_width, 1);
     put_text(
         buffer,
         workspace_area.x,
         workspace_area.y,
-        workspace_area.width,
-        " spaces",
-        Style::default()
-            .fg(palette.overlay0)
-            .add_modifier(Modifier::BOLD),
+        spaces_width,
+        spaces_label,
+        tab_style(active_view == SidebarSpacesView::Spaces),
     );
+    let git_label = " git";
+    let git_x = workspace_area.x.saturating_add(spaces_width);
+    let git_width = (git_label.len() as u16).min(workspace_area.width.saturating_sub(spaces_width));
+    hits.git_tab = Rect::new(git_x, workspace_area.y, git_width, 1);
+    put_text(
+        buffer,
+        git_x,
+        workspace_area.y,
+        git_width,
+        git_label,
+        tab_style(active_view == SidebarSpacesView::Git),
+    );
+}
 
+fn render_sidebar_footer(
+    buffer: &mut Buffer,
+    workspace_area: Rect,
+    footer_y: u16,
+    snapshot: &ClientShellSnapshot,
+    palette: &Palette,
+    hits: &mut ShellHitMap,
+) {
+    hits.new_workspace = Rect::new(
+        workspace_area.x,
+        footer_y,
+        5.min(workspace_area.width),
+        u16::from(workspace_area.height > 0),
+    );
+    put_text(
+        buffer,
+        workspace_area.x,
+        footer_y,
+        workspace_area.width,
+        " new",
+        Style::default().fg(palette.overlay0),
+    );
+    let attention = super::super::global_menu::global_menu_attention(snapshot);
+    let launcher_width = if attention { 8 } else { 6 }.min(workspace_area.width);
+    hits.global_launcher = Rect::new(
+        workspace_area.right().saturating_sub(launcher_width),
+        footer_y,
+        launcher_width,
+        1,
+    );
+    if attention {
+        let start_x = workspace_area.right().saturating_sub(6);
+        put_text(
+            buffer,
+            start_x,
+            footer_y,
+            2,
+            "● ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+        put_text(
+            buffer,
+            start_x.saturating_add(2),
+            footer_y,
+            4,
+            "menu",
+            Style::default().fg(palette.overlay0),
+        );
+    } else {
+        put_right_text(
+            buffer,
+            workspace_area,
+            footer_y,
+            "menu",
+            Style::default().fg(palette.overlay0),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_spaces_body(
+    buffer: &mut Buffer,
+    workspace_area: Rect,
+    snapshot: &ClientShellSnapshot,
+    config: &ClientShellConfig,
+    state: &mut ShellRenderState<'_>,
+    hits: &mut ShellHitMap,
+    palette: &Palette,
+) {
     let entries = workspace_entries(snapshot, state.collapsed_groups);
     let body = Rect::new(
         workspace_area.x,
@@ -358,85 +524,6 @@ pub(crate) fn render_sidebar(
             Style::default().fg(palette.accent),
         );
     }
-
-    let footer_y = workspace_area.bottom().saturating_sub(1);
-    if config.mouse_capture {
-        hits.new_workspace = Rect::new(
-            workspace_area.x,
-            footer_y,
-            5.min(workspace_area.width),
-            u16::from(workspace_area.height > 0),
-        );
-        put_text(
-            buffer,
-            workspace_area.x,
-            footer_y,
-            workspace_area.width,
-            " new",
-            Style::default().fg(palette.overlay0),
-        );
-        let attention = super::super::global_menu::global_menu_attention(snapshot);
-        let launcher_width = if attention { 8 } else { 6 }.min(workspace_area.width);
-        hits.global_launcher = Rect::new(
-            workspace_area.right().saturating_sub(launcher_width),
-            footer_y,
-            launcher_width,
-            1,
-        );
-        if attention {
-            let start_x = workspace_area.right().saturating_sub(6);
-            put_text(
-                buffer,
-                start_x,
-                footer_y,
-                2,
-                "● ",
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD),
-            );
-            put_text(
-                buffer,
-                start_x.saturating_add(2),
-                footer_y,
-                4,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        } else {
-            put_right_text(
-                buffer,
-                workspace_area,
-                footer_y,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        }
-    }
-
-    super::render_agent_panel(
-        buffer,
-        detail_area,
-        snapshot,
-        config,
-        state.agent_scroll,
-        hits,
-    );
-
-    hits.sidebar_toggle = Rect::new(
-        area.right().saturating_sub(2),
-        area.bottom().saturating_sub(1),
-        u16::from(area.width > 1),
-        u16::from(area.height > 0),
-    );
-    put_text(
-        buffer,
-        hits.sidebar_toggle.x,
-        hits.sidebar_toggle.y,
-        hits.sidebar_toggle.width,
-        "«",
-        Style::default().fg(palette.overlay0),
-    );
 }
 
 pub(crate) fn workspace_entries(

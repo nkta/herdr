@@ -161,6 +161,9 @@ pub(super) struct ShellHitMap {
     pub(super) sidebar_divider: Rect,
     pub(super) sidebar_section_divider: Rect,
     pub(super) sidebar_toggle: Rect,
+    pub(super) spaces_tab: Rect,
+    pub(super) git_tab: Rect,
+    pub(super) git_panel_rows: Vec<(Rect, usize)>,
     pub(super) new_workspace: Rect,
     pub(super) new_tab: Rect,
     pub(super) tab_scroll_left: Rect,
@@ -327,6 +330,23 @@ pub(super) enum ClientShellMode {
     Navigate,
     Resize,
     Copy,
+}
+
+/// Which tab is active in the sidebar's top section: the workspace list, or the Git panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum SidebarSpacesView {
+    #[default]
+    Spaces,
+    Git,
+}
+
+/// Presentation state for the sidebar's Git panel. Working-tree data (branch, ahead/behind,
+/// staged/unstaged files) lives in the server snapshot (`ClientShellWorkspace`); this only
+/// tracks what the client itself owns: selection and scroll.
+#[derive(Debug, Default)]
+pub(super) struct ClientGitPanelState {
+    pub(super) selected: usize,
+    pub(super) scroll: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -903,6 +923,8 @@ pub(crate) struct ClientShellState {
     pub(super) popup_terminal_id: Option<String>,
     pub(super) sidebar_collapsed: bool,
     pub(super) sidebar_collapsed_manual: bool,
+    pub(super) sidebar_view: SidebarSpacesView,
+    pub(super) git_panel: ClientGitPanelState,
     pub(super) sidebar_width: u16,
     pub(super) sidebar_width_manual: bool,
     pub(super) sidebar_section_split: f32,
@@ -1065,6 +1087,8 @@ impl ClientShellState {
             popup_terminal_id: None,
             sidebar_collapsed,
             sidebar_collapsed_manual: preferences.sidebar_collapsed.is_some(),
+            sidebar_view: SidebarSpacesView::default(),
+            git_panel: ClientGitPanelState::default(),
             sidebar_width,
             sidebar_width_manual: preferences.sidebar_width.is_some(),
             sidebar_section_split,
