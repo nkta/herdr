@@ -166,6 +166,15 @@ pub enum AppEvent {
     GitWorkingTreeRefreshed {
         updates: Vec<(String, Option<crate::workspace::GitWorkingTreeStatus>)>,
     },
+    /// A background git file/commit mutation (stage, unstage, discard, commit) finished.
+    /// Carries the endpoint response channel because forcing a working-tree refresh and
+    /// encoding the response both need to happen from the main loop.
+    GitMutationFinished {
+        request_id: String,
+        workspace_id: String,
+        respond_to: std::sync::mpsc::Sender<String>,
+        result: Result<(), String>,
+    },
     /// A configured tab bar status command finished.
     TabBarCommandFinished {
         generation: u64,

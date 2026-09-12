@@ -47,7 +47,7 @@ pub struct GitRepoCommandParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct GitStashApplyParams {
+pub struct GitStashPopParams {
     pub workspace_id: String,
     pub stash_ref: String,
 }

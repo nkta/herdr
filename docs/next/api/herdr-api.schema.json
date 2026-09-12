@@ -2261,7 +2261,7 @@
           ],
           "type": "object"
         },
-        "GitStashApplyParams": {
+        "GitStashPopParams": {
           "properties": {
             "stash_ref": {
               "type": "string"
@@ -5505,11 +5505,11 @@
         {
           "properties": {
             "method": {
-              "const": "git.stash.apply",
+              "const": "git.stash.pop",
               "type": "string"
             },
             "params": {
-              "$ref": "#/schemas/request/$defs/GitStashApplyParams"
+              "$ref": "#/schemas/request/$defs/GitStashPopParams"
             }
           },
           "required": [

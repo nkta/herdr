@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 mod agent_view;
 mod agents;
 mod env;
+mod git;
 mod integrations;
 mod layouts;
 mod pane_graphics;
@@ -36,6 +37,15 @@ impl App {
             } => self.handle_git_status_refreshed(results, cache_updates),
             AppEvent::GitWorkingTreeRefreshed { updates } => {
                 self.handle_git_working_tree_refreshed(updates)
+            }
+            AppEvent::GitMutationFinished {
+                request_id,
+                workspace_id,
+                respond_to,
+                result,
+            } => {
+                self.handle_git_mutation_finished(request_id, workspace_id, respond_to, result);
+                false
             }
             AppEvent::TabBarCommandFinished {
                 generation,
@@ -105,6 +115,30 @@ impl App {
         changed
     }
 
+    fn handle_git_mutation_finished(
+        &mut self,
+        request_id: String,
+        workspace_id: String,
+        respond_to: std::sync::mpsc::Sender<String>,
+        result: Result<(), String>,
+    ) {
+        let response = match result {
+            Ok(()) => {
+                responses::encode_success(request_id, crate::api::schema::ResponseResult::Ok {})
+            }
+            Err(err) => responses::encode_error(request_id, "git_mutation_failed", err),
+        };
+        let _ = respond_to.send(response);
+        if self
+            .state
+            .workspaces
+            .iter()
+            .any(|ws| ws.id == workspace_id && ws.git_panel_demand)
+        {
+            self.force_git_working_tree_refresh_now();
+        }
+    }
+
     pub(crate) fn handle_internal_event(&mut self, ev: AppEvent) {
         let _ = self.handle_internal_event_with_pane_updates(ev);
     }
@@ -143,6 +177,22 @@ impl App {
         } = ev
         {
             self.handle_git_status_refreshed(results, cache_updates);
+            return Vec::new();
+        }
+
+        if let AppEvent::GitWorkingTreeRefreshed { updates } = ev {
+            self.handle_git_working_tree_refreshed(updates);
+            return Vec::new();
+        }
+
+        if let AppEvent::GitMutationFinished {
+            request_id,
+            workspace_id,
+            respond_to,
+            result,
+        } = ev
+        {
+            self.handle_git_mutation_finished(request_id, workspace_id, respond_to, result);
             return Vec::new();
         }
 
@@ -1101,6 +1151,77 @@ impl App {
                     "invalid_request",
                     "worktree.remove is handled asynchronously by the app runtime",
                 );
+            }
+            Method::GitPanelSetActive(params) => {
+                let _ = params;
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "git.panel.set_active is only available through a client shell endpoint",
+                );
+            }
+            Method::GitFileStage(params) => {
+                let _ = params;
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "git.file.stage is handled asynchronously by the app runtime",
+                );
+            }
+            Method::GitFileUnstage(params) => {
+                let _ = params;
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "git.file.unstage is handled asynchronously by the app runtime",
+                );
+            }
+            Method::GitFileDiscard(params) => {
+                let _ = params;
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "git.file.discard is handled asynchronously by the app runtime",
+                );
+            }
+            Method::GitCommit(params) => {
+                let _ = params;
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "git.commit is handled asynchronously by the app runtime",
+                );
+            }
+            Method::GitDiffGet(params) => {
+                let _ = params;
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "git.diff.get is handled asynchronously by the app runtime",
+                );
+            }
+            Method::GitPickerList(params) => {
+                let _ = params;
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "git.picker.list is handled asynchronously by the app runtime",
+                );
+            }
+            Method::GitRepoFetch(params) => return self.handle_git_repo_fetch(request.id, params),
+            Method::GitRepoPull(params) => return self.handle_git_repo_pull(request.id, params),
+            Method::GitRepoPush(params) => return self.handle_git_repo_push(request.id, params),
+            Method::GitRepoLog(params) => return self.handle_git_repo_log(request.id, params),
+            Method::GitStashPush(params) => return self.handle_git_stash_push(request.id, params),
+            Method::GitStashPop(params) => return self.handle_git_stash_pop(request.id, params),
+            Method::GitBranchCreate(params) => {
+                return self.handle_git_branch_create(request.id, params)
+            }
+            Method::GitBranchSwitch(params) => {
+                return self.handle_git_branch_switch(request.id, params)
+            }
+            Method::GitBranchDelete(params) => {
+                return self.handle_git_branch_delete(request.id, params)
             }
             Method::TabList(params) => return self.handle_tab_list(request.id, params),
             Method::TabGet(target) => return self.handle_tab_get(request.id, target),

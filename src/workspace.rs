@@ -23,10 +23,11 @@ use self::git::git_status_cache_key_for_space;
 pub(crate) use self::{git::git_status_snapshot_for_cwd_with_demand, tab::MovedPane};
 pub use self::{
     git::{
-        derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_space_metadata,
-        git_status_cache_key, git_working_tree_status, DiffHunk, DiffLine, DiffLineKind, FileDiff,
-        GitFileEntry, GitFileStatusKind, GitListEntry, GitSpaceMetadata, GitStatusCacheEntry,
-        GitStatusRefreshDemand, GitWorkingTreeStatus,
+        derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_branch_list, git_file_diff,
+        git_space_metadata, git_stash_list, git_status_cache_key, git_untracked_file_diff,
+        git_working_tree_status, run_git_commit, run_git_file_action, DiffHunk, DiffLine,
+        DiffLineKind, FileDiff, GitFileActionKind, GitFileEntry, GitFileStatusKind, GitListEntry,
+        GitSpaceMetadata, GitStatusCacheEntry, GitStatusRefreshDemand, GitWorkingTreeStatus,
     },
     tab::{NewPane, Tab},
 };

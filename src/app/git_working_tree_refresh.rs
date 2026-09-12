@@ -7,6 +7,13 @@ use crate::events::AppEvent;
 use crate::workspace::GitWorkingTreeStatus;
 
 impl App {
+    /// Makes the next headless loop tick due for a working-tree refresh, e.g. right after a
+    /// file mutation so the panel doesn't wait a full `GIT_WORKING_TREE_REFRESH_INTERVAL`.
+    pub(crate) fn force_git_working_tree_refresh_now(&mut self) {
+        self.last_git_working_tree_refresh = Instant::now() - GIT_WORKING_TREE_REFRESH_INTERVAL;
+        self.render_notify.notify_one();
+    }
+
     /// Sets the aggregated "at least one client is watching this workspace's git panel" fact.
     /// Returns whether it actually changed, so callers can skip a redundant repaint.
     pub(crate) fn set_git_panel_demand(&mut self, workspace_id: &str, demand: bool) -> bool {

@@ -431,7 +431,7 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
         Method::GitRepoPush(_) => "git.repo.push",
         Method::GitRepoLog(_) => "git.repo.log",
         Method::GitStashPush(_) => "git.stash.push",
-        Method::GitStashApply(_) => "git.stash.apply",
+        Method::GitStashPop(_) => "git.stash.pop",
         Method::GitBranchCreate(_) => "git.branch.create",
         Method::GitBranchSwitch(_) => "git.branch.switch",
         Method::GitBranchDelete(_) => "git.branch.delete",

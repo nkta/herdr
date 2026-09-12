@@ -1840,6 +1840,18 @@ impl AppState {
                 let _ = updates;
                 Vec::new()
             }
+            AppEvent::GitMutationFinished {
+                request_id,
+                workspace_id,
+                respond_to,
+                result,
+            } => {
+                let _ = request_id;
+                let _ = workspace_id;
+                let _ = respond_to;
+                let _ = result;
+                Vec::new()
+            }
             AppEvent::WorktreeAddFinished(_) => Vec::new(),
             AppEvent::WorktreeRemoveFinished(_) => Vec::new(),
             AppEvent::TabBarCommandFinished { .. } => Vec::new(),

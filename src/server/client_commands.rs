@@ -29,7 +29,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "git.repo.log",
     "git.repo.pull",
     "git.repo.push",
-    "git.stash.apply",
+    "git.stash.pop",
     "git.stash.push",
     "integration.install",
     "integration.list",

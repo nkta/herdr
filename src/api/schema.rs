@@ -125,8 +125,8 @@ pub enum Method {
     GitRepoLog(GitRepoCommandParams),
     #[serde(rename = "git.stash.push")]
     GitStashPush(GitRepoCommandParams),
-    #[serde(rename = "git.stash.apply")]
-    GitStashApply(GitStashApplyParams),
+    #[serde(rename = "git.stash.pop")]
+    GitStashPop(GitStashPopParams),
     #[serde(rename = "git.branch.create")]
     GitBranchCreate(GitBranchNameParams),
     #[serde(rename = "git.branch.switch")]

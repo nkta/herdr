@@ -1,3 +1,4 @@
+mod actions;
 mod config;
 #[cfg(test)]
 mod config_tests;
@@ -11,10 +12,8 @@ mod worktree_status;
 
 pub(crate) use self::discovery::automatic_workspace_label;
 
-// diff/lists re-exports (and worktree_status's own status-refreshing function) aren't consumed
-// yet; the server/API commits later on this branch wire them up.
-#[allow(unused_imports)]
 pub use self::{
+    actions::{run_git_commit, run_git_file_action, GitFileActionKind},
     diff::{git_file_diff, git_untracked_file_diff, DiffHunk, DiffLine, DiffLineKind, FileDiff},
     discovery::{
         derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_space_metadata,
