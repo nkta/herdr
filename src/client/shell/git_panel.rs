@@ -1,6 +1,11 @@
 use super::*;
 use ratatui::style::Color;
 
+/// Rows reserved for the wrapped message text below the commit box header, VS Code's Source
+/// Control input being the reference point: a real multi-line field showing the whole draft,
+/// not a single-line preview.
+const COMMIT_BOX_MESSAGE_ROWS: u16 = 5;
+
 fn status_glyph(
     status: crate::protocol::ClientShellGitFileStatus,
     palette: &Palette,
@@ -134,18 +139,30 @@ pub(super) fn render_git_panel(
         return (Vec::new(), Rect::default());
     }
 
-    // The commit box always claims its two rows at the bottom, so the file list shrinks first.
-    let commit_box_top = area.bottom().saturating_sub(2).max(y);
+    // The commit box grows with the wrapped draft (capped at COMMIT_BOX_MESSAGE_ROWS) and always
+    // claims its rows at the bottom, so the file list shrinks first.
+    let wrap_width = area.width.saturating_sub(1);
+    let wrapped_message = wrap_commit_message(&git_panel.commit_message, wrap_width);
+    let message_rows = (wrapped_message.len() as u16).clamp(1, COMMIT_BOX_MESSAGE_ROWS);
+    let desired_commit_box_height = message_rows.saturating_add(1);
+    let commit_box_top = area
+        .bottom()
+        .saturating_sub(desired_commit_box_height)
+        .max(y);
     let list_bottom = commit_box_top;
     render_commit_box(
         buffer,
         area,
         commit_box_top,
         git_panel,
+        &wrapped_message,
         commit_agent_generate_supported,
         palette,
     );
-    let commit_box_height = area.bottom().saturating_sub(commit_box_top).min(2);
+    let commit_box_height = area
+        .bottom()
+        .saturating_sub(commit_box_top)
+        .min(desired_commit_box_height);
     let commit_box_rect = if commit_box_height == 0 {
         Rect::default()
     } else {
@@ -232,14 +249,17 @@ pub(super) fn render_git_panel(
     (hits, commit_box_rect)
 }
 
-/// Renders the two-row commit box pinned to the bottom of the panel: a header naming the
-/// keybinding to submit, and a single-line preview of the draft message (embedded newlines
-/// collapse to a count suffix since the box never grows past two rows).
+/// Renders the commit box pinned to the bottom of the panel: a header naming the keybinding to
+/// submit, and a real multi-line, word-wrapped text field for the draft message below it —
+/// modeled on VS Code's Source Control input rather than a single-line preview. Editing only
+/// ever appends at (or backspaces from) the end of the message, so the field is bottom-anchored:
+/// it always shows the tail of the wrapped text, keeping the insertion point in view.
 fn render_commit_box(
     buffer: &mut Buffer,
     area: Rect,
     top: u16,
     git_panel: &ClientGitPanelState,
+    wrapped: &[String],
     commit_agent_generate_supported: bool,
     palette: &Palette,
 ) {
@@ -268,36 +288,94 @@ fn render_commit_box(
             palette.overlay0
         }),
     );
-    let message_y = top.saturating_add(1);
-    if message_y >= area.bottom() {
+
+    let message_top = top.saturating_add(1);
+    if message_top >= area.bottom() {
         return;
     }
-    let rect = Rect::new(area.x, message_y, area.width, 1);
-    if focused {
-        buffer.set_style(rect, Style::default().bg(palette.surface0));
-    }
-    let mut lines = git_panel.commit_message.split('\n');
-    let first_line = lines.next().unwrap_or_default();
-    let extra_lines = lines.count();
-    let preview = if git_panel.commit_message.is_empty() {
-        " (no message)".to_string()
-    } else if extra_lines > 0 {
-        format!(" {first_line} (+{extra_lines})")
+    let message_height = area.bottom() - message_top;
+    let box_bg = if focused {
+        palette.surface0
     } else {
-        format!(" {first_line}")
+        palette.panel_bg
     };
-    put_text(
-        buffer,
-        rect.x,
-        rect.y,
-        rect.width,
-        &preview,
-        Style::default().fg(if git_panel.commit_message.is_empty() {
+    let message_area = Rect::new(area.x, message_top, area.width, message_height);
+    buffer.set_style(message_area, Style::default().bg(box_bg));
+
+    let is_empty = git_panel.commit_message.is_empty();
+    let visible_height = usize::from(message_height);
+    let first_visible = wrapped.len().saturating_sub(visible_height);
+    let text_style = Style::default()
+        .fg(if is_empty {
             palette.overlay0
         } else {
             palette.text
-        }),
-    );
+        })
+        .bg(box_bg);
+
+    for (row_offset, line) in wrapped[first_visible..].iter().enumerate() {
+        let y = message_top + row_offset as u16;
+        let is_last_line = first_visible + row_offset == wrapped.len() - 1;
+        if is_empty && row_offset == 0 {
+            put_text(
+                buffer,
+                area.x + 1,
+                y,
+                area.width.saturating_sub(1),
+                "Message…",
+                text_style,
+            );
+        } else {
+            put_text(
+                buffer,
+                area.x + 1,
+                y,
+                area.width.saturating_sub(1),
+                line,
+                text_style,
+            );
+        }
+        if focused && is_last_line {
+            let cursor_x = area.x + 1 + display_width(line);
+            if cursor_x < area.right() {
+                buffer.set_style(
+                    Rect::new(cursor_x, y, 1, 1),
+                    Style::default().fg(box_bg).bg(palette.text),
+                );
+            }
+        }
+    }
+}
+
+/// Word-wraps `text` to `width` columns for display only — the stored draft keeps its original
+/// spacing and newlines, only the on-screen rendering wraps. Each manual newline starts a new
+/// paragraph; words within a paragraph are packed greedily, and a single word longer than
+/// `width` is placed alone on its line (display clipping trims it rather than a manual
+/// character-level break). Always returns at least one (possibly empty) line.
+fn wrap_commit_message(text: &str, width: u16) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            let candidate_width = if current.is_empty() {
+                display_width(word)
+            } else {
+                display_width(&current) + 1 + display_width(word)
+            };
+            if current.is_empty() || candidate_width <= width {
+                if !current.is_empty() {
+                    current.push(' ');
+                }
+                current.push_str(word);
+            } else {
+                lines.push(std::mem::take(&mut current));
+                current.push_str(word);
+            }
+        }
+        lines.push(current);
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -505,6 +583,104 @@ mod tests {
         assert!(!text.contains("STAGED CHANGES"));
         assert!(text.contains("staged.rs"));
         assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn commit_box_shows_the_full_wrapped_message_not_just_the_first_line() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 15);
+        let mut buffer = Buffer::empty(area);
+        let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        let git_panel = ClientGitPanelState {
+            commit_message: "first line\nsecond line\nthird line".into(),
+            ..Default::default()
+        };
+
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
+
+        let text = buffer_text(&buffer);
+        assert!(text.contains("first line"));
+        assert!(text.contains("second line"));
+        assert!(text.contains("third line"));
+        assert!(!text.contains("(+2)"));
+    }
+
+    #[test]
+    fn commit_box_grows_for_a_longer_wrapped_message_and_stays_capped() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 20);
+        let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
+
+        let mut buffer_short = Buffer::empty(area);
+        let short = ClientGitPanelState {
+            commit_message: "short".into(),
+            ..Default::default()
+        };
+        let (_, short_box) =
+            render_git_panel(&mut buffer_short, area, Some(&ws), &short, false, &palette);
+        assert_eq!(short_box.height, 2);
+
+        let mut buffer_long = Buffer::empty(area);
+        let long = ClientGitPanelState {
+            commit_message: "one two three four five six seven eight nine ten eleven twelve \
+                              thirteen fourteen fifteen sixteen"
+                .into(),
+            ..Default::default()
+        };
+        let (_, long_box) =
+            render_git_panel(&mut buffer_long, area, Some(&ws), &long, false, &palette);
+        assert!(long_box.height > short_box.height);
+        assert!(long_box.height <= COMMIT_BOX_MESSAGE_ROWS + 1);
+    }
+
+    #[test]
+    fn empty_commit_box_shows_placeholder_text() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 10);
+        let mut buffer = Buffer::empty(area);
+        let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        let git_panel = ClientGitPanelState::default();
+
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
+
+        assert!(buffer_text(&buffer).contains("Message…"));
+    }
+
+    #[test]
+    fn focused_commit_box_draws_a_cursor_after_the_text() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 10);
+        let mut buffer = Buffer::empty(area);
+        let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        let git_panel = ClientGitPanelState {
+            commit_message: "hi".into(),
+            focus: GitSidebarFocus::CommitBox,
+            ..Default::default()
+        };
+
+        let (_, commit_box) =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
+
+        let message_y = commit_box.y + 1;
+        let cursor_x = area.x + 1 + display_width("hi");
+        assert_eq!(buffer[(cursor_x, message_y)].bg, palette.text);
+    }
+
+    #[test]
+    fn wrap_commit_message_packs_words_and_keeps_manual_blank_lines() {
+        let wrapped = wrap_commit_message("fix bug\n\nlonger explanation across two lines", 12);
+        assert_eq!(wrapped[0], "fix bug");
+        assert_eq!(wrapped[1], "");
+        assert!(wrapped[2..].iter().all(|line| display_width(line) <= 12));
+        assert_eq!(
+            wrapped[2..].join(" "),
+            "longer explanation across two lines"
+        );
+    }
+
+    #[test]
+    fn wrap_commit_message_of_empty_text_returns_one_empty_line() {
+        assert_eq!(wrap_commit_message("", 10), vec![String::new()]);
     }
 
     #[test]

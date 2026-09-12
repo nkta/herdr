@@ -21,7 +21,9 @@ pub fn build_commit_message_prompt(diff: &str) -> String {
     format!(
         "Write a concise git commit message (a short summary line, optionally a blank line then \
          a brief body) describing the following staged changes. Reply with only the commit \
-         message text: no markdown fences, no preamble, no explanation.\n\n{truncated}"
+         message text: no markdown fences, no preamble, no explanation. Do not add a \
+         signature, co-author line, or any attribution or mention of an AI, assistant, or \
+         coding agent having generated this message or the change.\n\n{truncated}"
     )
 }
 
