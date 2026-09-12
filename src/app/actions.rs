@@ -1836,6 +1836,10 @@ impl AppState {
                 let _ = cache_updates;
                 Vec::new()
             }
+            AppEvent::GitWorkingTreeRefreshed { updates } => {
+                let _ = updates;
+                Vec::new()
+            }
             AppEvent::WorktreeAddFinished(_) => Vec::new(),
             AppEvent::WorktreeRemoveFinished(_) => Vec::new(),
             AppEvent::TabBarCommandFinished { .. } => Vec::new(),

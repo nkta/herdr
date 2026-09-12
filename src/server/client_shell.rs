@@ -64,8 +64,7 @@ pub(super) fn snapshot(
                 branch: state.branch(),
                 git_ahead_behind: state.git_ahead_behind(),
                 git_repo: state.git_space().is_some(),
-                // Populated once a client asks to watch this workspace's git panel (later commit).
-                git_working_tree: None,
+                git_working_tree: state.git_working_tree().cloned().map(Into::into),
                 tokens,
                 worktree: workspace
                     .worktree

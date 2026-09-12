@@ -24,8 +24,8 @@ pub(crate) use self::{git::git_status_snapshot_for_cwd_with_demand, tab::MovedPa
 pub use self::{
     git::{
         derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_space_metadata,
-        git_status_cache_key, DiffHunk, DiffLine, DiffLineKind, FileDiff, GitFileEntry,
-        GitFileStatusKind, GitListEntry, GitSpaceMetadata, GitStatusCacheEntry,
+        git_status_cache_key, git_working_tree_status, DiffHunk, DiffLine, DiffLineKind, FileDiff,
+        GitFileEntry, GitFileStatusKind, GitListEntry, GitSpaceMetadata, GitStatusCacheEntry,
         GitStatusRefreshDemand, GitWorkingTreeStatus,
     },
     tab::{NewPane, Tab},
@@ -194,6 +194,12 @@ pub struct Workspace {
     pub(crate) cached_git_ahead_behind: Option<(usize, usize)>,
     /// Cached derived Git repo metadata for worktree actions and status display.
     pub(crate) cached_git_space: Option<GitSpaceMetadata>,
+    /// Cached working-tree file status (staged/unstaged), refreshed only while
+    /// `git_panel_demand` is set.
+    pub(crate) cached_git_working_tree: Option<GitWorkingTreeStatus>,
+    /// Whether at least one connected client currently has this workspace's git panel open.
+    /// Aggregated client-shell-connection state; gates the background working-tree refresh.
+    pub(crate) git_panel_demand: bool,
     /// Explicit Herdr-managed worktree grouping provenance.
     pub worktree_space: Option<WorktreeSpaceMembership>,
     pub(crate) metadata_tokens: crate::metadata_tokens::MetadataTokens,
@@ -261,6 +267,8 @@ impl Workspace {
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
             cached_git_space,
+            cached_git_working_tree: None,
+            git_panel_demand: false,
             worktree_space: None,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
             metadata_token_sequences: HashMap::new(),
@@ -413,6 +421,8 @@ impl Workspace {
                 cached_git_branch: git_branch(&initial_cwd),
                 cached_git_ahead_behind: None,
                 cached_git_space,
+                cached_git_working_tree: None,
+                git_panel_demand: false,
                 worktree_space: None,
                 metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
                 metadata_token_sequences: HashMap::new(),
@@ -1086,6 +1096,10 @@ impl Workspace {
         self.cached_git_space.as_ref()
     }
 
+    pub fn git_working_tree(&self) -> Option<&GitWorkingTreeStatus> {
+        self.cached_git_working_tree.as_ref()
+    }
+
     pub fn worktree_space(&self) -> Option<&WorktreeSpaceMembership> {
         self.worktree_space.as_ref()
     }
@@ -1206,6 +1220,8 @@ impl Workspace {
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
             cached_git_space: None,
+            cached_git_working_tree: None,
+            git_panel_demand: false,
             worktree_space: None,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
             metadata_token_sequences: HashMap::new(),

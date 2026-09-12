@@ -362,6 +362,14 @@ fn handle_request(
         );
     }
 
+    if matches!(&request.method, Method::GitPanelSetActive(_)) {
+        return error_response_json(
+            request.id,
+            "connection_local_only",
+            "git.panel.set_active is only available through a client shell endpoint".into(),
+        );
+    }
+
     if matches!(&request.method, Method::ServerStop(_)) {
         if let Some(server_stop) = server_stop {
             server_stop.store(true, Ordering::Release);

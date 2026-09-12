@@ -34,6 +34,9 @@ impl App {
                 results,
                 cache_updates,
             } => self.handle_git_status_refreshed(results, cache_updates),
+            AppEvent::GitWorkingTreeRefreshed { updates } => {
+                self.handle_git_working_tree_refreshed(updates)
+            }
             AppEvent::TabBarCommandFinished {
                 generation,
                 segment_index,
@@ -68,6 +71,33 @@ impl App {
         let changed = self
             .state
             .apply_workspace_git_statuses(&self.terminal_runtimes, results);
+        if changed {
+            self.render_dirty.request_generic();
+            self.render_notify.notify_one();
+        }
+        changed
+    }
+
+    fn handle_git_working_tree_refreshed(
+        &mut self,
+        updates: Vec<(String, Option<crate::workspace::GitWorkingTreeStatus>)>,
+    ) -> bool {
+        self.git_working_tree_refresh_in_flight = false;
+        let mut changed = false;
+        for (workspace_id, status) in updates {
+            let Some(workspace) = self
+                .state
+                .workspaces
+                .iter_mut()
+                .find(|ws| ws.id == workspace_id)
+            else {
+                continue;
+            };
+            if workspace.cached_git_working_tree != status {
+                workspace.cached_git_working_tree = status;
+                changed = true;
+            }
+        }
         if changed {
             self.render_dirty.request_generic();
             self.render_notify.notify_one();

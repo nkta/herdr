@@ -175,6 +175,9 @@ impl App {
             include_git_refresh
                 .then(|| self.git_refresh_deadline())
                 .flatten(),
+            include_git_refresh
+                .then(|| self.git_working_tree_refresh_deadline())
+                .flatten(),
             self.next_auto_update_check,
             self.next_agent_manifest_update_check,
             self.next_update_handoff_attempt,

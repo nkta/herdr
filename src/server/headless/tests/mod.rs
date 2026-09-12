@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "git_panel_interest.rs"]
+mod git_panel_interest_tests;
 #[path = "pane_graphics.rs"]
 mod pane_graphics_tests;
 #[path = "surface_interest.rs"]
@@ -66,6 +68,7 @@ fn test_headless_server_with_event_hub(event_hub: api::EventHub) -> HeadlessServ
         clients: HashMap::new(),
         #[cfg(unix)]
         next_client_id: 1,
+        git_panel_watchers: HashMap::new(),
         foreground_client_id: None,
         tab_geometry_controllers: HashMap::new(),
         popup_owner_tab_id: None,

@@ -161,6 +161,11 @@ pub enum AppEvent {
         results: Vec<WorkspaceGitStatus>,
         cache_updates: Vec<(std::path::PathBuf, GitStatusCacheEntry)>,
     },
+    /// Background working-tree (staged/unstaged file) refresh completed for the workspaces
+    /// whose git panel is currently being watched by at least one client.
+    GitWorkingTreeRefreshed {
+        updates: Vec<(String, Option<crate::workspace::GitWorkingTreeStatus>)>,
+    },
     /// A configured tab bar status command finished.
     TabBarCommandFinished {
         generation: u64,

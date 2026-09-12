@@ -74,6 +74,7 @@ use crate::server::terminal_attach::paste_payload_for_runtime;
 mod bootstrap;
 mod client_views;
 mod endpoint_requests;
+mod git_panel_interest;
 mod lifecycle;
 mod notifications;
 mod pane_graphics;
@@ -208,6 +209,10 @@ pub struct HeadlessServer {
     next_client_id: u64,
     /// The client currently driving session-wide host presentation and side effects.
     foreground_client_id: Option<u64>,
+    /// Client ids currently watching each workspace's git panel, keyed by workspace id.
+    /// Mirrors `ClientConnection.git_panel_open_workspace_id`; aggregated into
+    /// `Workspace.git_panel_demand`.
+    git_panel_watchers: HashMap<String, std::collections::HashSet<u64>>,
     /// Ephemeral shell connection controlling PTY geometry for each stable tab id.
     tab_geometry_controllers: HashMap<String, u64>,
     /// Stable tab id whose viewers may see and interact with the one terminal popup.
@@ -350,6 +355,7 @@ impl HeadlessServer {
             clients: HashMap::new(),
             #[cfg(unix)]
             next_client_id: 1,
+            git_panel_watchers: HashMap::new(),
             foreground_client_id: None,
             tab_geometry_controllers: HashMap::new(),
             popup_owner_tab_id: None,
@@ -994,6 +1000,7 @@ impl HeadlessServer {
 
     fn remove_client(&mut self, client_id: u64) -> bool {
         self.retire_direct_graphics_for_client(client_id);
+        self.release_git_panel_watch_on_disconnect(client_id);
         let disconnected_focus = self
             .clients
             .get(&client_id)
@@ -3332,6 +3339,7 @@ impl HeadlessServer {
 
         if self.has_app_client() {
             self.app.start_git_status_refresh_if_due(now);
+            self.app.start_git_working_tree_refresh_if_due(now);
         }
 
         if self

@@ -75,6 +75,19 @@ impl HeadlessServer {
             self.send_to_client(client_id, message);
             return false;
         }
+        if let api::schema::Method::GitPanelSetActive(params) = &request.method {
+            let changed =
+                self.set_git_panel_watch(client_id, params.workspace_id.clone(), params.active);
+            self.send_to_client(
+                client_id,
+                crate::server::client_commands::success_message_with_result(
+                    boot_id,
+                    request_id,
+                    api::schema::ResponseResult::Ok {},
+                ),
+            );
+            return changed;
+        }
 
         let api_request_id = format!(
             "endpoint:{}:{client_id}:{request_id}",
