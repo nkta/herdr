@@ -11,8 +11,8 @@ mod worktree_status;
 
 pub(crate) use self::discovery::automatic_workspace_label;
 
-// diff/lists/worktree_status re-exports aren't consumed yet; the server/API commits later on
-// this branch wire them up.
+// diff/lists re-exports (and worktree_status's own status-refreshing function) aren't consumed
+// yet; the server/API commits later on this branch wire them up.
 #[allow(unused_imports)]
 pub use self::{
     diff::{git_file_diff, git_untracked_file_diff, FileDiff},

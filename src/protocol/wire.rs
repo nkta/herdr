@@ -1018,11 +1018,77 @@ pub struct ClientShellWorkspace {
     pub custom_label: bool,
     pub branch: Option<String>,
     pub git_ahead_behind: Option<(usize, usize)>,
+    /// Whether the workspace's cwd is inside a git repository at all. Older clients that predate
+    /// this field simply never see the git sidebar tab it gates.
+    #[serde(default)]
+    pub git_repo: bool,
+    /// `None` until a client asks to watch the git panel for this workspace (`git.panel.set_active`);
+    /// absent entirely for clients built before this field existed.
+    #[serde(default)]
+    pub git_working_tree: Option<ClientShellGitWorkingTree>,
     pub tokens: Vec<(String, String)>,
     pub worktree: Option<ClientShellWorktree>,
     pub focused: bool,
     #[serde(deserialize_with = "deserialize_client_shell_agent_status")]
     pub agent_status: crate::api::schema::AgentStatus,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientShellGitWorkingTree {
+    pub staged: Vec<ClientShellGitFileEntry>,
+    pub unstaged: Vec<ClientShellGitFileEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientShellGitFileEntry {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub status: ClientShellGitFileStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClientShellGitFileStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+    Conflicted,
+    /// A future status kind that this client doesn't know how to render.
+    #[serde(other)]
+    Unknown,
+}
+
+impl From<crate::workspace::GitFileStatusKind> for ClientShellGitFileStatus {
+    fn from(status: crate::workspace::GitFileStatusKind) -> Self {
+        match status {
+            crate::workspace::GitFileStatusKind::Modified => Self::Modified,
+            crate::workspace::GitFileStatusKind::Added => Self::Added,
+            crate::workspace::GitFileStatusKind::Deleted => Self::Deleted,
+            crate::workspace::GitFileStatusKind::Renamed => Self::Renamed,
+            crate::workspace::GitFileStatusKind::Untracked => Self::Untracked,
+            crate::workspace::GitFileStatusKind::Conflicted => Self::Conflicted,
+        }
+    }
+}
+
+impl From<crate::workspace::GitFileEntry> for ClientShellGitFileEntry {
+    fn from(entry: crate::workspace::GitFileEntry) -> Self {
+        Self {
+            path: entry.path,
+            original_path: entry.original_path,
+            status: entry.status.into(),
+        }
+    }
+}
+
+impl From<crate::workspace::GitWorkingTreeStatus> for ClientShellGitWorkingTree {
+    fn from(status: crate::workspace::GitWorkingTreeStatus) -> Self {
+        Self {
+            staged: status.staged.into_iter().map(Into::into).collect(),
+            unstaged: status.unstaged.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2652,6 +2718,15 @@ mod tests {
                 custom_label: false,
                 branch: Some("main".into()),
                 git_ahead_behind: None,
+                git_repo: true,
+                git_working_tree: Some(ClientShellGitWorkingTree {
+                    staged: vec![ClientShellGitFileEntry {
+                        path: "staged.rs".into(),
+                        original_path: None,
+                        status: ClientShellGitFileStatus::Added,
+                    }],
+                    unstaged: Vec::new(),
+                }),
                 tokens: Vec::new(),
                 worktree: None,
                 focused: true,
