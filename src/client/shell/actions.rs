@@ -891,7 +891,9 @@ impl ClientShellState {
             | PendingEndpointKind::IntegrationInstall) => {
                 return self.handle_settings_endpoint_result(kind, result);
             }
-            kind @ (PendingEndpointKind::GitFileAction | PendingEndpointKind::GitCommit) => {
+            kind @ (PendingEndpointKind::GitFileAction
+            | PendingEndpointKind::GitCommit
+            | PendingEndpointKind::GitDiffGet { .. }) => {
                 return (self.handle_git_endpoint_result(kind, result), Vec::new());
             }
             kind => {

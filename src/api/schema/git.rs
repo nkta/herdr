@@ -64,6 +64,9 @@ pub enum GitDiffLineKind {
     Context,
     Addition,
     Deletion,
+    /// A future line kind that this client doesn't know how to render.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

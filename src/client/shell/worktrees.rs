@@ -560,7 +560,8 @@ impl ClientShellState {
                 | PendingEndpointKind::CopyMotion { .. }
                 | PendingEndpointKind::CopySearch { .. }
                 | PendingEndpointKind::GitFileAction
-                | PendingEndpointKind::GitCommit,
+                | PendingEndpointKind::GitCommit
+                | PendingEndpointKind::GitDiffGet { .. },
                 Err(_),
             ) => true,
         }

@@ -1,5 +1,6 @@
 use super::*;
 
+mod git_diff_overlay;
 mod settings_overlay;
 mod worktree_overlays;
 
@@ -76,6 +77,7 @@ pub(crate) fn render_client_overlay(
             worktree_overlays::render_worktree_remove_overlay(b, v, p)
         }
         ClientShellOverlay::ContextMenu(_) | ClientShellOverlay::GlobalMenu(_) => None,
+        ClientShellOverlay::GitDiff(v) => git_diff_overlay::render_git_diff_overlay(b, v, p),
     }
 }
 

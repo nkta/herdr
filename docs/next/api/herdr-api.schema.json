@@ -7987,12 +7987,21 @@
           "type": "object"
         },
         "GitDiffLineKind": {
-          "enum": [
-            "context",
-            "addition",
-            "deletion"
-          ],
-          "type": "string"
+          "oneOf": [
+            {
+              "enum": [
+                "context",
+                "addition",
+                "deletion"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "A future line kind that this client doesn't know how to render.",
+              "type": "string"
+            }
+          ]
         },
         "GitFileDiff": {
           "properties": {

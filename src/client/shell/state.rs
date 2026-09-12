@@ -378,6 +378,7 @@ pub(super) enum ClientShellOverlayKind {
     ContextMenu,
     GlobalMenu,
     Settings,
+    GitDiff,
 }
 
 #[derive(Debug)]
@@ -600,6 +601,18 @@ pub(super) struct ClientWorktreeRemoveOverlay {
     pub(super) force_confirmation: bool,
 }
 
+/// Full-screen side-by-side diff view for one file, replacing the terminal area while open.
+#[derive(Debug)]
+pub(super) struct ClientGitDiffOverlay {
+    pub(super) path: String,
+    /// Whether this is the diff against the index (`--cached`) or the worktree.
+    pub(super) staged: bool,
+    pub(super) diff: Option<crate::api::schema::GitFileDiff>,
+    pub(super) scroll: usize,
+    pub(super) loading: bool,
+    pub(super) error: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientContextMenuAction {
     Rename,
@@ -676,6 +689,7 @@ pub(super) enum ClientShellOverlay {
     ContextMenu(ClientContextMenuOverlay),
     GlobalMenu(ClientGlobalMenuOverlay),
     Settings(ClientSettingsOverlay),
+    GitDiff(ClientGitDiffOverlay),
 }
 
 impl ClientShellOverlay {
@@ -694,6 +708,7 @@ impl ClientShellOverlay {
             Self::ContextMenu(_) => ClientShellOverlayKind::ContextMenu,
             Self::GlobalMenu(_) => ClientShellOverlayKind::GlobalMenu,
             Self::Settings(_) => ClientShellOverlayKind::Settings,
+            Self::GitDiff(_) => ClientShellOverlayKind::GitDiff,
         }
     }
 }
@@ -703,6 +718,10 @@ pub(super) enum PendingEndpointKind {
     Generic,
     GitFileAction,
     GitCommit,
+    GitDiffGet {
+        path: String,
+        staged: bool,
+    },
     ProductAnnouncementDismiss {
         version: String,
         id: String,

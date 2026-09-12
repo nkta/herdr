@@ -82,6 +82,91 @@ impl ClientShellState {
             .map(|entry| entry.path.clone())
     }
 
+    /// The selected file's path, whether it should be diffed against the index (staged), and
+    /// whether it's untracked (diffed by reading it directly rather than via `git diff`).
+    fn selected_git_file_target(&self) -> Option<(String, bool, bool)> {
+        let working_tree = self.focused_git_working_tree()?;
+        let staged_len = working_tree.staged.len();
+        if self.git_panel.selected < staged_len {
+            let entry = &working_tree.staged[self.git_panel.selected];
+            Some((entry.path.clone(), true, false))
+        } else {
+            let entry = working_tree
+                .unstaged
+                .get(self.git_panel.selected - staged_len)?;
+            let untracked = entry.status == crate::protocol::ClientShellGitFileStatus::Untracked;
+            Some((entry.path.clone(), false, untracked))
+        }
+    }
+
+    fn open_git_diff_overlay(&mut self, outcome: &mut ClientShellInput) {
+        let Some(workspace_id) = self.focused_git_workspace_id() else {
+            return;
+        };
+        let Some((path, staged, untracked)) = self.selected_git_file_target() else {
+            return;
+        };
+        self.overlay = Some(ClientShellOverlay::GitDiff(ClientGitDiffOverlay {
+            path: path.clone(),
+            staged,
+            diff: None,
+            scroll: 0,
+            loading: true,
+            error: None,
+        }));
+        outcome.repaint = true;
+        self.push_endpoint_method_with_kind(
+            crate::api::schema::Method::GitDiffGet(crate::api::schema::GitDiffGetParams {
+                workspace_id,
+                path: path.clone(),
+                staged,
+                untracked,
+            }),
+            PendingEndpointKind::GitDiffGet { path, staged },
+            outcome,
+        );
+    }
+
+    /// Routes a key while the diff overlay is open. Returns whether the key was consumed.
+    pub(super) fn route_git_diff_overlay_key(
+        &mut self,
+        key: &crate::input::TerminalKey,
+        outcome: &mut ClientShellInput,
+    ) -> bool {
+        let Some(ClientShellOverlay::GitDiff(overlay)) = self.overlay.as_mut() else {
+            return false;
+        };
+        let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
+        match code {
+            KeyCode::Esc if modifiers.is_empty() => {
+                self.overlay = None;
+                outcome.repaint = true;
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') if modifiers.is_empty() => {
+                overlay.scroll = overlay.scroll.saturating_sub(1);
+                outcome.repaint = true;
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') if modifiers.is_empty() => {
+                overlay.scroll = overlay.scroll.saturating_add(1);
+                outcome.repaint = true;
+                true
+            }
+            KeyCode::PageUp if modifiers.is_empty() => {
+                overlay.scroll = overlay.scroll.saturating_sub(20);
+                outcome.repaint = true;
+                true
+            }
+            KeyCode::PageDown if modifiers.is_empty() => {
+                overlay.scroll = overlay.scroll.saturating_add(20);
+                outcome.repaint = true;
+                true
+            }
+            _ => true,
+        }
+    }
+
     fn move_git_panel_selection(&mut self, delta: i32, outcome: &mut ClientShellInput) {
         let count = self.git_panel_row_count();
         if count == 0 {
@@ -205,6 +290,10 @@ impl ClientShellState {
                     }
                     true
                 }
+                KeyCode::Enter if modifiers.is_empty() => {
+                    self.open_git_diff_overlay(outcome);
+                    true
+                }
                 KeyCode::Esc if modifiers.is_empty() => {
                     self.set_sidebar_view(SidebarSpacesView::Spaces, outcome);
                     true
@@ -269,6 +358,29 @@ impl ClientShellState {
                     }
                     Err(error) => {
                         self.git_panel.last_error = Some(error.message);
+                    }
+                }
+                true
+            }
+            PendingEndpointKind::GitDiffGet { path, staged } => {
+                let Some(ClientShellOverlay::GitDiff(overlay)) = self.overlay.as_mut() else {
+                    return false;
+                };
+                // A stale response for a diff the user has since navigated away from.
+                if overlay.path != path || overlay.staged != staged {
+                    return false;
+                }
+                overlay.loading = false;
+                match result {
+                    Ok(crate::api::schema::ResponseResult::GitFileDiff { diff }) => {
+                        overlay.diff = Some(diff);
+                        overlay.error = None;
+                    }
+                    Ok(_) => {
+                        overlay.error = Some("endpoint returned an unexpected diff result".into());
+                    }
+                    Err(error) => {
+                        overlay.error = Some(error.message);
                     }
                 }
                 true
@@ -469,5 +581,113 @@ mod tests {
             state.git_panel.last_error.as_deref(),
             Some("nothing to commit")
         );
+    }
+
+    #[test]
+    fn enter_opens_the_diff_overlay_and_requests_it() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        let mut outcome = ClientShellInput::default();
+
+        let consumed = state.route_git_panel_key(&key(KeyCode::Enter), &mut outcome);
+
+        assert!(consumed);
+        assert!(matches!(
+            state.overlay,
+            Some(ClientShellOverlay::GitDiff(_))
+        ));
+        assert_eq!(outcome.actions.len(), 1);
+        let ClientShellAction::Endpoint { request, .. } = &outcome.actions[0] else {
+            panic!("expected an endpoint action");
+        };
+        assert!(matches!(
+            &request.method,
+            crate::api::schema::Method::GitDiffGet(params)
+                if params.path == "f.rs" && !params.staged
+        ));
+    }
+
+    #[test]
+    fn diff_response_fills_the_open_overlay() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.overlay = Some(ClientShellOverlay::GitDiff(
+            crate::client::shell::state::ClientGitDiffOverlay {
+                path: "f.rs".into(),
+                staged: false,
+                diff: None,
+                scroll: 0,
+                loading: true,
+                error: None,
+            },
+        ));
+
+        let repaint = state.handle_git_endpoint_result(
+            PendingEndpointKind::GitDiffGet {
+                path: "f.rs".into(),
+                staged: false,
+            },
+            Ok(crate::api::schema::ResponseResult::GitFileDiff {
+                diff: crate::api::schema::GitFileDiff::default(),
+            }),
+        );
+
+        assert!(repaint);
+        let Some(ClientShellOverlay::GitDiff(overlay)) = &state.overlay else {
+            panic!("expected the diff overlay to still be open");
+        };
+        assert!(!overlay.loading);
+        assert!(overlay.diff.is_some());
+    }
+
+    #[test]
+    fn stale_diff_response_is_ignored_once_the_overlay_moved_on() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.overlay = Some(ClientShellOverlay::GitDiff(
+            crate::client::shell::state::ClientGitDiffOverlay {
+                path: "other.rs".into(),
+                staged: false,
+                diff: None,
+                scroll: 0,
+                loading: true,
+                error: None,
+            },
+        ));
+
+        let repaint = state.handle_git_endpoint_result(
+            PendingEndpointKind::GitDiffGet {
+                path: "f.rs".into(),
+                staged: false,
+            },
+            Ok(crate::api::schema::ResponseResult::GitFileDiff {
+                diff: crate::api::schema::GitFileDiff::default(),
+            }),
+        );
+
+        assert!(!repaint);
+        let Some(ClientShellOverlay::GitDiff(overlay)) = &state.overlay else {
+            panic!("expected the diff overlay to still be open");
+        };
+        assert!(overlay.loading);
+        assert!(overlay.diff.is_none());
+    }
+
+    #[test]
+    fn esc_closes_the_diff_overlay() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.overlay = Some(ClientShellOverlay::GitDiff(
+            crate::client::shell::state::ClientGitDiffOverlay {
+                path: "f.rs".into(),
+                staged: false,
+                diff: None,
+                scroll: 0,
+                loading: false,
+                error: None,
+            },
+        ));
+        let mut outcome = ClientShellInput::default();
+
+        let consumed = state.route_git_diff_overlay_key(&key(KeyCode::Esc), &mut outcome);
+
+        assert!(consumed);
+        assert!(state.overlay.is_none());
     }
 }
