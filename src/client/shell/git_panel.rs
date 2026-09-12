@@ -303,7 +303,15 @@ fn render_commit_box(
 
     let is_empty = git_panel.commit_message.is_empty();
     let visible_height = usize::from(message_height);
-    let first_visible = wrapped.len().saturating_sub(visible_height);
+    let wrap_width = area.width.saturating_sub(1);
+    let (cursor_row, cursor_column) = commit_cursor_position(
+        &git_panel.commit_message,
+        git_panel.commit_cursor,
+        wrap_width,
+    );
+    // Bottom-anchored by default (show the tail, matching the common "editing at the end" case),
+    // but scrolled up just enough to keep the cursor in view when it's earlier in the draft.
+    let first_visible = wrapped.len().saturating_sub(visible_height).min(cursor_row);
     let text_style = Style::default()
         .fg(if is_empty {
             palette.overlay0
@@ -312,9 +320,12 @@ fn render_commit_box(
         })
         .bg(box_bg);
 
-    for (row_offset, line) in wrapped[first_visible..].iter().enumerate() {
+    for (row_offset, line) in wrapped[first_visible..]
+        .iter()
+        .enumerate()
+        .take(visible_height)
+    {
         let y = message_top + row_offset as u16;
-        let is_last_line = first_visible + row_offset == wrapped.len() - 1;
         if is_empty && row_offset == 0 {
             put_text(
                 buffer,
@@ -334,8 +345,8 @@ fn render_commit_box(
                 text_style,
             );
         }
-        if focused && is_last_line {
-            let cursor_x = area.x + 1 + display_width(line);
+        if focused && first_visible + row_offset == cursor_row {
+            let cursor_x = area.x + 1 + cursor_column;
             if cursor_x < area.right() {
                 buffer.set_style(
                     Rect::new(cursor_x, y, 1, 1),
@@ -344,6 +355,27 @@ fn render_commit_box(
             }
         }
     }
+}
+
+/// The wrapped-row index and display column of `cursor` (a byte offset into the un-wrapped
+/// commit message, always on a char boundary) within `wrap_commit_message`'s output for the same
+/// text and width. Computed by reusing that same wrap function on the preceding logical lines and
+/// on the current line's prefix up to the cursor, so the row/column always agrees with what's
+/// actually rendered instead of tracking offsets down a separate path that could drift.
+fn commit_cursor_position(commit_message: &str, cursor: usize, wrap_width: u16) -> (usize, u16) {
+    let line_start = commit_message[..cursor]
+        .rfind('\n')
+        .map_or(0, |pos| pos + 1);
+    let preceding_paragraphs = commit_message[..line_start].matches('\n').count();
+    let preceding_rows: usize = commit_message
+        .split('\n')
+        .take(preceding_paragraphs)
+        .map(|paragraph| wrap_commit_message(paragraph, wrap_width).len())
+        .sum();
+    let partial = wrap_commit_message(&commit_message[line_start..cursor], wrap_width);
+    let row = preceding_rows + partial.len() - 1;
+    let column = display_width(partial.last().map_or("", String::as_str));
+    (row, column)
 }
 
 /// Word-wraps `text` to `width` columns for display only — the stored draft keeps its original
@@ -638,8 +670,10 @@ mod tests {
         let area = Rect::new(0, 0, 30, 20);
         let mut buffer = Buffer::empty(area);
         let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        let message = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight";
         let git_panel = ClientGitPanelState {
-            commit_message: "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight".into(),
+            commit_message: message.into(),
+            commit_cursor: message.len(),
             ..Default::default()
         };
 
@@ -674,6 +708,7 @@ mod tests {
         let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
         let git_panel = ClientGitPanelState {
             commit_message: "hi".into(),
+            commit_cursor: 2,
             focus: GitSidebarFocus::CommitBox,
             ..Default::default()
         };
@@ -684,6 +719,47 @@ mod tests {
         let message_y = commit_box.y + 1;
         let cursor_x = area.x + 1 + display_width("hi");
         assert_eq!(buffer[(cursor_x, message_y)].bg, palette.text);
+    }
+
+    #[test]
+    fn commit_box_scrolls_up_to_reveal_a_cursor_earlier_in_a_long_message() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 20);
+        let mut buffer = Buffer::empty(area);
+        let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        let message = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight";
+        let git_panel = ClientGitPanelState {
+            commit_message: message.into(),
+            commit_cursor: 0, // at the very start, on "one"
+            focus: GitSidebarFocus::CommitBox,
+            ..Default::default()
+        };
+
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
+
+        let text = buffer_text(&buffer);
+        assert!(text.contains("one"));
+        assert!(text.contains("two"));
+        assert!(!text.contains("eight"));
+    }
+
+    #[test]
+    fn commit_cursor_position_locates_the_wrapped_row_and_column() {
+        let message = "fix bug\nlonger body line";
+        // Cursor right after "fix bug" (end of the first logical line).
+        let (row, column) = commit_cursor_position(message, 7, 30);
+        assert_eq!(row, 0);
+        assert_eq!(column, display_width("fix bug"));
+
+        // Cursor at the very start of the second line.
+        let (row, column) = commit_cursor_position(message, 8, 30);
+        assert_eq!(row, 1);
+        assert_eq!(column, 0);
+
+        // Cursor mid-word wraps to a second row when the width forces a break.
+        let (row, column) = commit_cursor_position("one two three", 13, 7);
+        assert_eq!(row, 1);
+        assert_eq!(column, display_width("three"));
     }
 
     #[test]

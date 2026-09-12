@@ -280,6 +280,86 @@ impl ClientShellState {
         }
     }
 
+    /// Inserts `c` at the commit box cursor and advances the cursor past it.
+    fn insert_commit_text(&mut self, c: char) {
+        let cursor = self.git_panel.commit_cursor;
+        self.git_panel.commit_message.insert(cursor, c);
+        self.git_panel.commit_cursor = cursor + c.len_utf8();
+    }
+
+    /// Removes the character immediately before the cursor (a no-op at the start of the draft).
+    fn commit_cursor_backspace(&mut self) {
+        let cursor = self.git_panel.commit_cursor;
+        let Some(previous) = self.git_panel.commit_message[..cursor].chars().next_back() else {
+            return;
+        };
+        let previous_start = cursor - previous.len_utf8();
+        self.git_panel.commit_message.remove(previous_start);
+        self.git_panel.commit_cursor = previous_start;
+    }
+
+    /// Removes the character at the cursor (a no-op at the end of the draft).
+    fn commit_cursor_delete_forward(&mut self) {
+        let cursor = self.git_panel.commit_cursor;
+        if cursor < self.git_panel.commit_message.len() {
+            self.git_panel.commit_message.remove(cursor);
+        }
+    }
+
+    fn move_commit_cursor_left(&mut self) {
+        let cursor = self.git_panel.commit_cursor;
+        if let Some(previous) = self.git_panel.commit_message[..cursor].chars().next_back() {
+            self.git_panel.commit_cursor = cursor - previous.len_utf8();
+        }
+    }
+
+    fn move_commit_cursor_right(&mut self) {
+        let cursor = self.git_panel.commit_cursor;
+        if let Some(next) = self.git_panel.commit_message[cursor..].chars().next() {
+            self.git_panel.commit_cursor = cursor + next.len_utf8();
+        }
+    }
+
+    fn move_commit_cursor_home(&mut self) {
+        let (start, _) =
+            commit_current_line_range(&self.git_panel.commit_message, self.git_panel.commit_cursor);
+        self.git_panel.commit_cursor = start;
+    }
+
+    fn move_commit_cursor_end(&mut self) {
+        let (_, end) =
+            commit_current_line_range(&self.git_panel.commit_message, self.git_panel.commit_cursor);
+        self.git_panel.commit_cursor = end;
+    }
+
+    /// Moves the cursor to the equivalent column of the previous (`delta < 0`) or next
+    /// (`delta > 0`) logical line (split on manual newlines, not the box's word-wrapped display
+    /// rows) — a no-op at the first/last line. The column is clamped to the target line's length,
+    /// so moving between a long and a short line lands at the short line's end, not mid-word.
+    fn move_commit_cursor_vertically(&mut self, delta: i32) {
+        let text = &self.git_panel.commit_message;
+        let ranges = commit_line_ranges(text);
+        let cursor = self.git_panel.commit_cursor;
+        let Some(current) = ranges
+            .iter()
+            .position(|&(start, end)| cursor >= start && cursor <= end)
+        else {
+            return;
+        };
+        let Some(target) = current.checked_add_signed(delta as isize) else {
+            return;
+        };
+        let Some(&(target_start, target_end)) = ranges.get(target) else {
+            return;
+        };
+        let (current_start, _) = ranges[current];
+        let column = text[current_start..cursor].chars().count();
+        self.git_panel.commit_cursor = text[target_start..target_end]
+            .char_indices()
+            .nth(column)
+            .map_or(target_end, |(offset, _)| target_start + offset);
+    }
+
     /// Routes a key to the Git panel while it is open. Returns whether the key was consumed —
     /// callers must not forward a consumed key to the focused pane or ordinary keybind
     /// resolution.
@@ -356,12 +436,47 @@ impl ClientShellState {
                     true
                 }
                 KeyCode::Enter if modifiers.is_empty() => {
-                    self.git_panel.commit_message.push('\n');
+                    self.insert_commit_text('\n');
                     outcome.repaint = true;
                     true
                 }
                 KeyCode::Backspace if modifiers.is_empty() => {
-                    self.git_panel.commit_message.pop();
+                    self.commit_cursor_backspace();
+                    outcome.repaint = true;
+                    true
+                }
+                KeyCode::Delete if modifiers.is_empty() => {
+                    self.commit_cursor_delete_forward();
+                    outcome.repaint = true;
+                    true
+                }
+                KeyCode::Left if modifiers.is_empty() => {
+                    self.move_commit_cursor_left();
+                    outcome.repaint = true;
+                    true
+                }
+                KeyCode::Right if modifiers.is_empty() => {
+                    self.move_commit_cursor_right();
+                    outcome.repaint = true;
+                    true
+                }
+                KeyCode::Up if modifiers.is_empty() => {
+                    self.move_commit_cursor_vertically(-1);
+                    outcome.repaint = true;
+                    true
+                }
+                KeyCode::Down if modifiers.is_empty() => {
+                    self.move_commit_cursor_vertically(1);
+                    outcome.repaint = true;
+                    true
+                }
+                KeyCode::Home if modifiers.is_empty() => {
+                    self.move_commit_cursor_home();
+                    outcome.repaint = true;
+                    true
+                }
+                KeyCode::End if modifiers.is_empty() => {
+                    self.move_commit_cursor_end();
                     outcome.repaint = true;
                     true
                 }
@@ -372,7 +487,7 @@ impl ClientShellState {
                 KeyCode::Char(c)
                     if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
-                    self.git_panel.commit_message.push(c);
+                    self.insert_commit_text(c);
                     outcome.repaint = true;
                     true
                 }
@@ -402,6 +517,7 @@ impl ClientShellState {
                 match result {
                     Ok(_) => {
                         self.git_panel.commit_message.clear();
+                        self.git_panel.commit_cursor = 0;
                         self.git_panel.last_error = None;
                     }
                     Err(error) => {
@@ -416,6 +532,7 @@ impl ClientShellState {
                     Ok(crate::api::schema::ResponseResult::GitCommitMessageGenerated {
                         message,
                     }) => {
+                        self.git_panel.commit_cursor = message.len();
                         self.git_panel.commit_message = message;
                         self.git_panel.last_error = None;
                     }
@@ -656,6 +773,30 @@ impl ClientShellState {
     }
 }
 
+/// Byte ranges `(start, end)` of each logical line in `text`, split on `\n` (the separator itself
+/// is excluded from both the line before and after it). Always returns at least one range, even
+/// for an empty string.
+pub(super) fn commit_line_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for (index, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            ranges.push((start, index));
+            start = index + 1;
+        }
+    }
+    ranges.push((start, text.len()));
+    ranges
+}
+
+/// The `(start, end)` byte range of the logical line containing `cursor`.
+pub(super) fn commit_current_line_range(text: &str, cursor: usize) -> (usize, usize) {
+    commit_line_ranges(text)
+        .into_iter()
+        .find(|&(start, end)| cursor >= start && cursor <= end)
+        .unwrap_or((0, text.len()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -774,6 +915,118 @@ mod tests {
         state.route_git_panel_key(&key(KeyCode::Char('i')), &mut outcome);
 
         assert_eq!(state.git_panel.commit_message, "hi");
+        assert_eq!(state.git_panel.commit_cursor, 2);
+    }
+
+    #[test]
+    fn left_and_right_arrows_move_the_cursor_without_changing_the_message() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "hi".into();
+        state.git_panel.commit_cursor = 2;
+        let mut outcome = ClientShellInput::default();
+
+        state.route_git_panel_key(&key(KeyCode::Left), &mut outcome);
+        assert_eq!(state.git_panel.commit_cursor, 1);
+
+        state.route_git_panel_key(&key(KeyCode::Left), &mut outcome);
+        assert_eq!(state.git_panel.commit_cursor, 0);
+
+        // No-op at the start of the draft.
+        state.route_git_panel_key(&key(KeyCode::Left), &mut outcome);
+        assert_eq!(state.git_panel.commit_cursor, 0);
+
+        state.route_git_panel_key(&key(KeyCode::Right), &mut outcome);
+        assert_eq!(state.git_panel.commit_cursor, 1);
+        assert_eq!(state.git_panel.commit_message, "hi");
+    }
+
+    #[test]
+    fn typing_in_the_middle_inserts_at_the_cursor() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "hi".into();
+        state.git_panel.commit_cursor = 1;
+        let mut outcome = ClientShellInput::default();
+
+        state.route_git_panel_key(&key(KeyCode::Char('X')), &mut outcome);
+
+        assert_eq!(state.git_panel.commit_message, "hXi");
+        assert_eq!(state.git_panel.commit_cursor, 2);
+    }
+
+    #[test]
+    fn backspace_removes_the_character_before_the_cursor_not_always_the_last() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "hi".into();
+        state.git_panel.commit_cursor = 1;
+        let mut outcome = ClientShellInput::default();
+
+        state.route_git_panel_key(&key(KeyCode::Backspace), &mut outcome);
+
+        assert_eq!(state.git_panel.commit_message, "i");
+        assert_eq!(state.git_panel.commit_cursor, 0);
+    }
+
+    #[test]
+    fn delete_removes_the_character_at_the_cursor() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "hi".into();
+        state.git_panel.commit_cursor = 0;
+        let mut outcome = ClientShellInput::default();
+
+        state.route_git_panel_key(&key(KeyCode::Delete), &mut outcome);
+
+        assert_eq!(state.git_panel.commit_message, "i");
+        assert_eq!(state.git_panel.commit_cursor, 0);
+    }
+
+    #[test]
+    fn up_and_down_move_between_lines_clamping_to_the_shorter_line() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "long first line\nshort".into();
+        state.git_panel.commit_cursor = state.git_panel.commit_message.len();
+        let mut outcome = ClientShellInput::default();
+
+        state.route_git_panel_key(&key(KeyCode::Up), &mut outcome);
+        assert_eq!(state.git_panel.commit_cursor, 5);
+
+        state.route_git_panel_key(&key(KeyCode::Down), &mut outcome);
+        assert_eq!(
+            state.git_panel.commit_cursor,
+            "long first line\nshort".len()
+        );
+    }
+
+    #[test]
+    fn up_does_nothing_on_the_first_line() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "only line".into();
+        state.git_panel.commit_cursor = 4;
+        let mut outcome = ClientShellInput::default();
+
+        state.route_git_panel_key(&key(KeyCode::Up), &mut outcome);
+
+        assert_eq!(state.git_panel.commit_cursor, 4);
+    }
+
+    #[test]
+    fn home_and_end_move_to_line_boundaries() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "first\nsecond".into();
+        state.git_panel.commit_cursor = "first\nsec".len();
+        let mut outcome = ClientShellInput::default();
+
+        state.route_git_panel_key(&key(KeyCode::Home), &mut outcome);
+        assert_eq!(state.git_panel.commit_cursor, "first\n".len());
+
+        state.route_git_panel_key(&key(KeyCode::End), &mut outcome);
+        assert_eq!(state.git_panel.commit_cursor, "first\nsecond".len());
     }
 
     #[test]

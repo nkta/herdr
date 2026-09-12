@@ -355,6 +355,9 @@ pub(super) struct ClientGitPanelState {
     pub(super) scroll: usize,
     pub(super) focus: GitSidebarFocus,
     pub(super) commit_message: String,
+    /// Byte offset into `commit_message` (always on a char boundary) where typing inserts and
+    /// backspace/delete/arrow keys act. Defaults to 0 (start of an empty draft).
+    pub(super) commit_cursor: usize,
     pub(super) commit_in_flight: bool,
     pub(super) generating_commit_message: bool,
     /// Path awaiting an explicit `y`/`Y` keystroke to confirm `git restore`.
