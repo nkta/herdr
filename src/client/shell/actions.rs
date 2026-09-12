@@ -891,6 +891,9 @@ impl ClientShellState {
             | PendingEndpointKind::IntegrationInstall) => {
                 return self.handle_settings_endpoint_result(kind, result);
             }
+            kind @ (PendingEndpointKind::GitFileAction | PendingEndpointKind::GitCommit) => {
+                return (self.handle_git_endpoint_result(kind, result), Vec::new());
+            }
             kind => {
                 let mut outcome = ClientShellInput::default();
                 let repaint = self.handle_worktree_endpoint_result(kind, result, &mut outcome);

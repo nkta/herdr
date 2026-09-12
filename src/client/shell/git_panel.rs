@@ -105,35 +105,71 @@ pub(super) fn render_git_panel(
         return Vec::new();
     }
 
-    let Some(working_tree) = workspace.git_working_tree.as_ref() else {
+    if let Some(path) = &git_panel.pending_discard {
         put_text(
             buffer,
             area.x,
             y,
             area.width,
-            " loading…",
-            Style::default().fg(palette.overlay0),
+            &format!(" discard {path}? (y/n)"),
+            Style::default()
+                .fg(palette.red)
+                .add_modifier(Modifier::BOLD),
         );
+        y = y.saturating_add(1);
+    } else if let Some(error) = &git_panel.last_error {
+        put_text(
+            buffer,
+            area.x,
+            y,
+            area.width,
+            &format!(" {error}"),
+            Style::default().fg(palette.red),
+        );
+        y = y.saturating_add(1);
+    }
+    if y >= area.bottom() {
+        return Vec::new();
+    }
+
+    // The commit box always claims its two rows at the bottom, so the file list shrinks first.
+    let commit_box_top = area.bottom().saturating_sub(2).max(y);
+    let list_bottom = commit_box_top;
+    render_commit_box(buffer, area, commit_box_top, git_panel, palette);
+
+    let Some(working_tree) = workspace.git_working_tree.as_ref() else {
+        if y < list_bottom {
+            put_text(
+                buffer,
+                area.x,
+                y,
+                area.width,
+                " loading…",
+                Style::default().fg(palette.overlay0),
+            );
+        }
         return Vec::new();
     };
 
     let lines = panel_lines(working_tree);
     if lines.is_empty() {
-        put_text(
-            buffer,
-            area.x,
-            y,
-            area.width,
-            " no changes",
-            Style::default().fg(palette.overlay0),
-        );
+        if y < list_bottom {
+            put_text(
+                buffer,
+                area.x,
+                y,
+                area.width,
+                " no changes",
+                Style::default().fg(palette.overlay0),
+            );
+        }
         return Vec::new();
     }
 
     let max_scroll = lines.len().saturating_sub(1);
     let mut hits = Vec::new();
     for line in lines.iter().skip(git_panel.scroll.min(max_scroll)) {
-        if y >= area.bottom() {
+        if y >= list_bottom {
             break;
         }
         match line {
@@ -179,6 +215,69 @@ pub(super) fn render_git_panel(
         y = y.saturating_add(1);
     }
     hits
+}
+
+/// Renders the two-row commit box pinned to the bottom of the panel: a header naming the
+/// keybinding to submit, and a single-line preview of the draft message (embedded newlines
+/// collapse to a count suffix since the box never grows past two rows).
+fn render_commit_box(
+    buffer: &mut Buffer,
+    area: Rect,
+    top: u16,
+    git_panel: &ClientGitPanelState,
+    palette: &Palette,
+) {
+    if top >= area.bottom() {
+        return;
+    }
+    let focused = git_panel.focus == GitSidebarFocus::CommitBox;
+    let header = if git_panel.commit_in_flight {
+        " committing…"
+    } else {
+        " COMMIT (ctrl+enter)"
+    };
+    put_text(
+        buffer,
+        area.x,
+        top,
+        area.width,
+        header,
+        Style::default().fg(if focused {
+            palette.text
+        } else {
+            palette.overlay0
+        }),
+    );
+    let message_y = top.saturating_add(1);
+    if message_y >= area.bottom() {
+        return;
+    }
+    let rect = Rect::new(area.x, message_y, area.width, 1);
+    if focused {
+        buffer.set_style(rect, Style::default().bg(palette.surface0));
+    }
+    let mut lines = git_panel.commit_message.split('\n');
+    let first_line = lines.next().unwrap_or_default();
+    let extra_lines = lines.count();
+    let preview = if git_panel.commit_message.is_empty() {
+        " (no message)".to_string()
+    } else if extra_lines > 0 {
+        format!(" {first_line} (+{extra_lines})")
+    } else {
+        format!(" {first_line}")
+    };
+    put_text(
+        buffer,
+        rect.x,
+        rect.y,
+        rect.width,
+        &preview,
+        Style::default().fg(if git_panel.commit_message.is_empty() {
+            palette.overlay0
+        } else {
+            palette.text
+        }),
+    );
 }
 
 #[cfg(test)]
@@ -336,6 +435,7 @@ mod tests {
         let scrolled = ClientGitPanelState {
             selected: 0,
             scroll: 1,
+            ..Default::default()
         };
         let hits = render_git_panel(&mut buffer_scrolled, area, Some(&ws), &scrolled, &palette);
         let text = buffer_text(&buffer_scrolled);
@@ -367,7 +467,7 @@ mod tests {
         let ws = workspace(true, Some(working_tree));
         let git_panel = ClientGitPanelState {
             selected: 1,
-            scroll: 0,
+            ..Default::default()
         };
 
         let hits = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);

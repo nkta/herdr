@@ -347,6 +347,20 @@ pub(super) enum SidebarSpacesView {
 pub(super) struct ClientGitPanelState {
     pub(super) selected: usize,
     pub(super) scroll: usize,
+    pub(super) focus: GitSidebarFocus,
+    pub(super) commit_message: String,
+    pub(super) commit_in_flight: bool,
+    /// Path awaiting an explicit `y`/`Y` keystroke to confirm `git restore`.
+    pub(super) pending_discard: Option<String>,
+    pub(super) last_error: Option<String>,
+}
+
+/// Which part of the Git panel has keyboard focus while it is open.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum GitSidebarFocus {
+    #[default]
+    FileList,
+    CommitBox,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -687,6 +701,8 @@ impl ClientShellOverlay {
 #[derive(Debug)]
 pub(super) enum PendingEndpointKind {
     Generic,
+    GitFileAction,
+    GitCommit,
     ProductAnnouncementDismiss {
         version: String,
         id: String,
