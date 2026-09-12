@@ -84,6 +84,12 @@ pub enum ResponseResult {
         path: String,
         forced: bool,
     },
+    GitFileDiff {
+        diff: super::git::GitFileDiff,
+    },
+    GitPickerList {
+        entries: Vec<super::git::GitPickerEntry>,
+    },
     TabInfo {
         tab: TabInfo,
     },

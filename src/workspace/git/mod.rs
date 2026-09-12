@@ -15,7 +15,7 @@ pub(crate) use self::discovery::automatic_workspace_label;
 // yet; the server/API commits later on this branch wire them up.
 #[allow(unused_imports)]
 pub use self::{
-    diff::{git_file_diff, git_untracked_file_diff, FileDiff},
+    diff::{git_file_diff, git_untracked_file_diff, DiffHunk, DiffLine, DiffLineKind, FileDiff},
     discovery::{
         derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_space_metadata,
         GitSpaceMetadata,

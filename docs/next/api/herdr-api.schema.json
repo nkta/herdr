@@ -2145,6 +2145,137 @@
           ],
           "type": "object"
         },
+        "GitBranchNameParams": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "name"
+          ],
+          "type": "object"
+        },
+        "GitCommitParams": {
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "message"
+          ],
+          "type": "object"
+        },
+        "GitDiffGetParams": {
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "staged": {
+              "default": false,
+              "type": "boolean"
+            },
+            "untracked": {
+              "default": false,
+              "type": "boolean"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "path"
+          ],
+          "type": "object"
+        },
+        "GitFileTargetParams": {
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "path"
+          ],
+          "type": "object"
+        },
+        "GitPanelSetActiveParams": {
+          "properties": {
+            "active": {
+              "type": "boolean"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "active"
+          ],
+          "type": "object"
+        },
+        "GitPickerKind": {
+          "enum": [
+            "stash",
+            "branch"
+          ],
+          "type": "string"
+        },
+        "GitPickerListParams": {
+          "properties": {
+            "kind": {
+              "$ref": "#/schemas/request/$defs/GitPickerKind"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "kind"
+          ],
+          "type": "object"
+        },
+        "GitRepoCommandParams": {
+          "properties": {
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id"
+          ],
+          "type": "object"
+        },
+        "GitStashApplyParams": {
+          "properties": {
+            "stash_ref": {
+              "type": "string"
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id",
+            "stash_ref"
+          ],
+          "type": "object"
+        },
         "IntegrationInstallParams": {
           "properties": {
             "target": {
@@ -5182,6 +5313,262 @@
         {
           "properties": {
             "method": {
+              "const": "git.panel.set_active",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitPanelSetActiveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.file.stage",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitFileTargetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.file.unstage",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitFileTargetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.file.discard",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitFileTargetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.commit",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitCommitParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.diff.get",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitDiffGetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.picker.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitPickerListParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.repo.fetch",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitRepoCommandParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.repo.pull",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitRepoCommandParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.repo.push",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitRepoCommandParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.repo.log",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitRepoCommandParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.stash.push",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitRepoCommandParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.stash.apply",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitStashApplyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.branch.create",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitBranchNameParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.branch.switch",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitBranchNameParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "git.branch.delete",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitBranchNameParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "tab.create",
               "type": "string"
             },
@@ -7542,6 +7929,103 @@
           ],
           "type": "string"
         },
+        "GitDiffHunk": {
+          "properties": {
+            "lines": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/GitDiffLine"
+              },
+              "type": "array"
+            },
+            "new_start": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "old_start": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "old_start",
+            "new_start",
+            "lines"
+          ],
+          "type": "object"
+        },
+        "GitDiffLine": {
+          "properties": {
+            "kind": {
+              "$ref": "#/schemas/success_response/$defs/GitDiffLineKind"
+            },
+            "new_lineno": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "old_lineno": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        "GitDiffLineKind": {
+          "enum": [
+            "context",
+            "addition",
+            "deletion"
+          ],
+          "type": "string"
+        },
+        "GitFileDiff": {
+          "properties": {
+            "binary": {
+              "default": false,
+              "type": "boolean"
+            },
+            "hunks": {
+              "default": [],
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/GitDiffHunk"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "GitPickerEntry": {
+          "description": "One selectable stash or branch entry for `git.picker.list`. Named distinctly from\n`crate::workspace::GitListEntry` (the internal parsing type this is converted from) to keep\nthe wire-facing API schema and the internal git-parsing layer decoupled.",
+          "properties": {
+            "label": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "label"
+          ],
+          "type": "object"
+        },
         "InstalledPluginInfo": {
           "properties": {
             "actions": {
@@ -9401,6 +9885,41 @@
                 "workspace_id",
                 "path",
                 "forced"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "diff": {
+                  "$ref": "#/schemas/success_response/$defs/GitFileDiff"
+                },
+                "type": {
+                  "const": "git_file_diff",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "diff"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "entries": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/GitPickerEntry"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "git_picker_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "entries"
               ],
               "type": "object"
             },

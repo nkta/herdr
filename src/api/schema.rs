@@ -4,6 +4,7 @@ pub mod agents;
 pub mod commands;
 pub mod common;
 pub mod events;
+pub mod git;
 pub mod integrations;
 pub mod panes;
 pub mod plugins;
@@ -18,6 +19,7 @@ pub use agents::*;
 pub use commands::*;
 pub use common::*;
 pub use events::*;
+pub use git::*;
 pub use integrations::*;
 pub use panes::*;
 pub use plugins::*;
@@ -99,6 +101,38 @@ pub enum Method {
     WorktreeOpen(WorktreeOpenParams),
     #[serde(rename = "worktree.remove")]
     WorktreeRemove(WorktreeRemoveParams),
+    #[serde(rename = "git.panel.set_active")]
+    GitPanelSetActive(GitPanelSetActiveParams),
+    #[serde(rename = "git.file.stage")]
+    GitFileStage(GitFileTargetParams),
+    #[serde(rename = "git.file.unstage")]
+    GitFileUnstage(GitFileTargetParams),
+    #[serde(rename = "git.file.discard")]
+    GitFileDiscard(GitFileTargetParams),
+    #[serde(rename = "git.commit")]
+    GitCommit(GitCommitParams),
+    #[serde(rename = "git.diff.get")]
+    GitDiffGet(GitDiffGetParams),
+    #[serde(rename = "git.picker.list")]
+    GitPickerList(GitPickerListParams),
+    #[serde(rename = "git.repo.fetch")]
+    GitRepoFetch(GitRepoCommandParams),
+    #[serde(rename = "git.repo.pull")]
+    GitRepoPull(GitRepoCommandParams),
+    #[serde(rename = "git.repo.push")]
+    GitRepoPush(GitRepoCommandParams),
+    #[serde(rename = "git.repo.log")]
+    GitRepoLog(GitRepoCommandParams),
+    #[serde(rename = "git.stash.push")]
+    GitStashPush(GitRepoCommandParams),
+    #[serde(rename = "git.stash.apply")]
+    GitStashApply(GitStashApplyParams),
+    #[serde(rename = "git.branch.create")]
+    GitBranchCreate(GitBranchNameParams),
+    #[serde(rename = "git.branch.switch")]
+    GitBranchSwitch(GitBranchNameParams),
+    #[serde(rename = "git.branch.delete")]
+    GitBranchDelete(GitBranchNameParams),
     #[serde(rename = "tab.create")]
     TabCreate(TabCreateParams),
     #[serde(rename = "tab.list")]
