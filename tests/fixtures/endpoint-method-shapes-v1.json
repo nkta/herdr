@@ -1,10 +1,13 @@
 {
   "client_shell.surface.set": "919df2ba99fe7d5df003a051dbbaf9929998387c53ccb652b6262bd8e4650330",
   "command.invoke": "b16817652442b1ea2405e60a0443826a55baca461e938f524e79b16a675c5899",
+  "commit_agent.list": "60d0b2e4a46082d20ecbb9454bf3e2a6763b29e290ae158118fdada5796ffaa0",
+  "commit_agent.set_active": "e8b0bc9f105d48cfa7c8a1ab017c1f4e2bada24046164ab9531f959f56fbc3d3",
   "git.branch.create": "a1b4307cb0b1e085e3eaef53a3a1e612d18c26b0f8d2d7d02acbdff0e6947a64",
   "git.branch.delete": "7700f287386aca72e2c22c191935a59012f2661927da6e72546d8a317a9cec40",
   "git.branch.switch": "b5c07420b15f6f5bcab3ba3f8485b3384a904568f5324e176ca5c5ee371757ef",
   "git.commit": "12a6b2e61cee2e8bb3fe39699722d9f8ec38ef8e4fa5872536df2708f30ffa9e",
+  "git.commit_message.generate": "66dc9942744d4d1726d9d9ec5d3ee759b7be0d6f209258a1bfe67b84829be472",
   "git.diff.get": "0f5ea6c1e6cc5a13ed804231076a7251dc4faf021f17239575ccd9b315db7344",
   "git.file.discard": "ecb1bda2d742a678e34dacea4b97b49a8688b2688172d3993063fe381c0b1208",
   "git.file.stage": "f6a1568121b10548b19984d2bd44797007cf205ca56115f7f74d008fdadf3ea0",

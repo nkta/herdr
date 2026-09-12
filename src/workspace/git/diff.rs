@@ -145,6 +145,21 @@ pub fn git_file_diff(repo_root: &Path, path: &str, staged: bool) -> Option<FileD
     Some(parse_unified_diff(&String::from_utf8_lossy(&output.stdout)))
 }
 
+/// Raw `git diff --cached` text (unparsed) for feeding an external tool such as a commit-message
+/// generation agent, not for rendering in the diff overlay.
+pub fn git_cached_diff_text(repo_root: &Path) -> Option<String> {
+    let mut command = crate::noninteractive_process::command("git");
+    command
+        .arg("-C")
+        .arg(repo_root)
+        .args(["diff", "--cached", "--no-color"]);
+    let output = command.output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 /// Synthesizes a diff for an untracked file by reading it directly rather than shelling
 /// `git diff --no-index -- /dev/null <path>` (avoids the `/dev/null` vs `NUL` split between Unix
 /// and the Windows target herdr ships for a case that's otherwise pure subprocess overhead, since

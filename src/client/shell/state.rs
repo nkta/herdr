@@ -356,6 +356,7 @@ pub(super) struct ClientGitPanelState {
     pub(super) focus: GitSidebarFocus,
     pub(super) commit_message: String,
     pub(super) commit_in_flight: bool,
+    pub(super) generating_commit_message: bool,
     /// Path awaiting an explicit `y`/`Y` keystroke to confirm `git restore`.
     pub(super) pending_discard: Option<String>,
     pub(super) last_error: Option<String>,
@@ -489,6 +490,7 @@ pub(super) enum ClientSettingsSection {
     Indicators,
     Sound,
     Toast,
+    CommitAgent,
     Integrations,
 }
 
@@ -498,6 +500,7 @@ impl ClientSettingsSection {
         Self::Indicators,
         Self::Sound,
         Self::Toast,
+        Self::CommitAgent,
         Self::Integrations,
     ];
 
@@ -507,6 +510,7 @@ impl ClientSettingsSection {
             Self::Indicators => "indicators",
             Self::Sound => "sound",
             Self::Toast => "toasts",
+            Self::CommitAgent => "commit agent",
             Self::Integrations => "integrations",
         }
     }
@@ -522,6 +526,10 @@ pub(super) struct ClientSettingsOverlay {
     pub(super) integration_messages: Vec<String>,
     pub(super) loading_integrations: bool,
     pub(super) installing_integrations: bool,
+    pub(super) commit_agents: Vec<crate::api::schema::CommitAgentInfo>,
+    pub(super) commit_agent_active: Option<String>,
+    pub(super) loading_commit_agents: bool,
+    pub(super) commit_agent_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -778,6 +786,7 @@ pub(super) enum PendingEndpointKind {
     Generic,
     GitFileAction,
     GitCommit,
+    GitCommitMessageGenerate,
     GitDiffGet {
         path: String,
         staged: bool,
@@ -792,6 +801,8 @@ pub(super) enum PendingEndpointKind {
     ReloadConfig,
     IntegrationList,
     IntegrationInstall,
+    CommitAgentList,
+    CommitAgentSetActive,
     PrepareWorktreeCreate {
         workspace_id: String,
     },

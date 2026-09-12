@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 mod agent_view;
 mod agents;
+mod commit_agents;
 mod env;
 mod git;
 mod integrations;
@@ -45,6 +46,14 @@ impl App {
                 result,
             } => {
                 self.handle_git_mutation_finished(request_id, workspace_id, respond_to, result);
+                false
+            }
+            AppEvent::GitCommitMessageGenerated {
+                request_id,
+                respond_to,
+                result,
+            } => {
+                self.handle_git_commit_message_generated(request_id, respond_to, result);
                 false
             }
             AppEvent::TabBarCommandFinished {
@@ -139,6 +148,24 @@ impl App {
         }
     }
 
+    fn handle_git_commit_message_generated(
+        &mut self,
+        request_id: String,
+        respond_to: std::sync::mpsc::Sender<String>,
+        result: Result<String, String>,
+    ) {
+        let response = match result {
+            Ok(message) => responses::encode_success(
+                request_id,
+                crate::api::schema::ResponseResult::GitCommitMessageGenerated { message },
+            ),
+            Err(err) => {
+                responses::encode_error(request_id, "commit_message_generation_failed", err)
+            }
+        };
+        let _ = respond_to.send(response);
+    }
+
     pub(crate) fn handle_internal_event(&mut self, ev: AppEvent) {
         let _ = self.handle_internal_event_with_pane_updates(ev);
     }
@@ -193,6 +220,16 @@ impl App {
         } = ev
         {
             self.handle_git_mutation_finished(request_id, workspace_id, respond_to, result);
+            return Vec::new();
+        }
+
+        if let AppEvent::GitCommitMessageGenerated {
+            request_id,
+            respond_to,
+            result,
+        } = ev
+        {
+            self.handle_git_commit_message_generated(request_id, respond_to, result);
             return Vec::new();
         }
 
@@ -1192,6 +1229,14 @@ impl App {
                     "git.commit is handled asynchronously by the app runtime",
                 );
             }
+            Method::GitCommitMessageGenerate(params) => {
+                let _ = params;
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "git.commit_message.generate is handled asynchronously by the app runtime",
+                );
+            }
             Method::GitDiffGet(params) => {
                 let _ = params;
                 return responses::encode_error(
@@ -1356,6 +1401,12 @@ impl App {
                 };
             }
             Method::PaneSendKeys(params) => return self.handle_pane_send_keys(request.id, params),
+            Method::CommitAgentList(_) => {
+                return self.handle_commit_agent_list(request.id);
+            }
+            Method::CommitAgentSetActive(params) => {
+                return self.handle_commit_agent_set_active(request.id, params);
+            }
             Method::IntegrationList(_) => {
                 return self.handle_integration_list(request.id);
             }

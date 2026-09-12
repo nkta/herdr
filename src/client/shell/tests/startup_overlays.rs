@@ -1180,6 +1180,18 @@ fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overla
         let next = state.handle_input_bytes(b"\t");
         assert!(next.actions.is_empty());
     }
+    let commit_agent = state.handle_input_bytes(b"\t");
+    let [ClientShellAction::Endpoint {
+        request: commit_agent_request,
+        ..
+    }] = &commit_agent.actions[..]
+    else {
+        panic!("commit agent section should request endpoint status");
+    };
+    assert!(matches!(
+        commit_agent_request.method,
+        crate::api::schema::Method::CommitAgentList(_)
+    ));
     let integrations = state.handle_input_bytes(b"\t");
     let [ClientShellAction::Endpoint { request, .. }] = &integrations.actions[..] else {
         panic!("integration section should request endpoint status");
@@ -1292,5 +1304,91 @@ fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overla
             ref integration_messages,
             ..
         })) if integration_messages == &["installed codex"]
+    ));
+}
+
+#[test]
+fn commit_agent_settings_section_lists_and_persists_the_active_agent() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.open_settings_overlay();
+    // Theme -> Indicators -> Sound -> Toast (no requests) -> CommitAgent (requests the list).
+    for _ in 0..3 {
+        let next = state.handle_input_bytes(b"\t");
+        assert!(next.actions.is_empty());
+    }
+    let list = state.handle_input_bytes(b"\t");
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
+            section: ClientSettingsSection::CommitAgent,
+            loading_commit_agents: true,
+            ..
+        }))
+    ));
+    let [ClientShellAction::Endpoint { request, .. }] = &list.actions[..] else {
+        panic!("commit agent section should request the agent list");
+    };
+    assert!(matches!(
+        request.method,
+        crate::api::schema::Method::CommitAgentList(_)
+    ));
+    let request_id = request.id.clone();
+
+    state.handle_endpoint_result(
+        "boot-1",
+        &request_id,
+        Ok(crate::api::schema::ResponseResult::CommitAgentList {
+            agents: vec![
+                crate::api::schema::CommitAgentInfo {
+                    id: "claude".into(),
+                    label: "Claude".into(),
+                    command: "claude".into(),
+                },
+                crate::api::schema::CommitAgentInfo {
+                    id: "codex".into(),
+                    label: "Codex".into(),
+                    command: "codex".into(),
+                },
+            ],
+            active: Some("claude".into()),
+        }),
+    );
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
+            loading_commit_agents: false,
+            selected: 0,
+            ref commit_agent_active,
+            ..
+        })) if commit_agent_active.as_deref() == Some("claude")
+    ));
+
+    state.handle_input_bytes(b"j");
+    let set_active = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &set_active.actions[..] else {
+        panic!("selecting an agent should request set_active");
+    };
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::CommitAgentSetActive(params) if params.id == "codex"
+    ));
+    let set_active_request_id = request.id.clone();
+
+    state.handle_endpoint_result(
+        "boot-1",
+        &set_active_request_id,
+        Ok(crate::api::schema::ResponseResult::CommitAgentSetActive {
+            active: Some("codex".into()),
+        }),
+    );
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
+            selected: 1,
+            ref commit_agent_active,
+            ..
+        })) if commit_agent_active.as_deref() == Some("codex")
     ));
 }

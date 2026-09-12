@@ -235,6 +235,18 @@ pub enum ResponseResult {
         changed: bool,
         reason: ClientWindowTitleReason,
     },
+    GitCommitMessageGenerated {
+        message: String,
+    },
+    CommitAgentList {
+        agents: Vec<super::commit_agents::CommitAgentInfo>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        active: Option<String>,
+    },
+    CommitAgentSetActive {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        active: Option<String>,
+    },
     IntegrationList {
         integrations: Vec<super::integrations::IntegrationInfo>,
     },

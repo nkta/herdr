@@ -506,6 +506,34 @@ droid = "off"
 claude = "on"
 ```
 
+## Commit message agents
+
+The Git panel's commit box can generate a commit message from the staged diff using an external
+CLI agent. The agent runs on the machine hosting the Herdr server (not the client), since that is
+where the git worktree and the agent binary live.
+
+```toml
+[commit_agents]
+active = "claude"
+
+[[commit_agents.agents]]
+id = "claude"
+label = "Claude"
+command = "claude"
+args = ["-p"]
+```
+
+`[[commit_agents.agents]]` is a user-defined list and is not enumerated in the
+[Config reference](/docs/config-reference/); add one entry per agent, each with a unique `id`,
+a display `label`, the `command` to run, and its `args`. The configured `command` reads a prompt
+(instructions plus the staged diff) from stdin and is expected to print the commit message on
+stdout. `commit_agents.active` selects which configured agent id runs; change it from the
+settings overlay's "commit agent" section, or edit it directly. Herdr ships a working default of
+a single `claude` agent even without a `[commit_agents]` section.
+
+With the commit box focused, `ctrl+g` generates a message with the active agent, replacing any
+draft already typed.
+
 ## Advanced configuration
 
 Search the [Config reference](/docs/config-reference/) for scrollback limits, nested launches, and other advanced or experimental settings. See [Session state and restore](/docs/session-state/) before enabling pane screen history; that guide explains the security trade-off of saving pane contents.

@@ -82,6 +82,8 @@ impl ClientShellState {
                 && self.endpoint_status(&self.active_endpoint_id)
                     == Some(ClientEndpointStatus::Online)
         });
+        let commit_agent_generate_supported =
+            self.supports_endpoint_method_name("git.commit_message.generate");
         let mut render_state = render::ShellRenderState {
             endpoints: &self.endpoints,
             active_endpoint_id: &self.active_endpoint_id,
@@ -105,6 +107,7 @@ impl ClientShellState {
             workspace_drop_indicator_row: None,
             sidebar_view: self.sidebar_view,
             git_panel: &self.git_panel,
+            commit_agent_generate_supported,
         };
         if let Some(snapshot) = local_snapshot {
             render::render_sidebar(
@@ -212,6 +215,8 @@ impl ClientShellState {
             _ => (None, None),
         };
         let mut buffer = Buffer::empty(Rect::new(0, 0, cols, rows));
+        let commit_agent_generate_supported =
+            self.supports_endpoint_method_name("git.commit_message.generate");
         self.hits = render::render_shell(
             &mut buffer,
             layout,
@@ -240,6 +245,7 @@ impl ClientShellState {
                 workspace_drop_indicator_row,
                 sidebar_view: self.sidebar_view,
                 git_panel: &self.git_panel,
+                commit_agent_generate_supported,
             },
         );
         self.hits.panes = surface

@@ -6,6 +6,7 @@ use super::{model::LoadedConfig, Config, CONFIG_PATH_ENV_VAR};
 
 const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
+    "commit_agents",
     "experimental",
     "keys",
     "onboarding",
@@ -327,6 +328,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
     );
     load_live_section(
         table,
+        "commit_agents",
+        "commit agents config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.commit_agents = section,
+    );
+    load_live_section(
+        table,
         "worktrees",
         "worktree config",
         &mut diagnostics,
@@ -351,6 +360,7 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
     );
 
     diagnostics.extend(config.theme.diagnostics());
+    diagnostics.extend(config.commit_agents.diagnostics());
 
     Ok(LoadedConfig {
         config,

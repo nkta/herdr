@@ -854,6 +854,11 @@ pub struct AppState {
     pub pane_scrollback_limit_bytes: usize,
     pub sound: SoundConfig,
     pub toast_config: ToastConfig,
+    /// Configured commit-message-generation agents (id, label, external CLI command/args) from
+    /// `[commit_agents]` in the server's own config.toml — the agent binary runs on whichever
+    /// machine hosts the git worktree, so this is server state, not a client preference.
+    pub commit_agents: Vec<crate::config::CommitAgentConfig>,
+    pub active_commit_agent: Option<String>,
     pub keybinds: Keybinds,
     /// UI color palette — all sidebar/UI colors centralized for theming.
     pub palette: Palette,
@@ -1079,6 +1084,8 @@ impl AppState {
                 ..SoundConfig::default()
             },
             toast_config: ToastConfig::default(),
+            commit_agents: Vec::new(),
+            active_commit_agent: None,
             keybinds: Keybinds::default(),
             palette: Palette::catppuccin(),
             theme_name: "catppuccin".to_string(),

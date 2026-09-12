@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod agents;
 pub mod commands;
+pub mod commit_agents;
 pub mod common;
 pub mod events;
 pub mod git;
@@ -17,6 +18,7 @@ pub mod worktrees;
 
 pub use agents::*;
 pub use commands::*;
+pub use commit_agents::*;
 pub use common::*;
 pub use events::*;
 pub use git::*;
@@ -111,6 +113,8 @@ pub enum Method {
     GitFileDiscard(GitFileTargetParams),
     #[serde(rename = "git.commit")]
     GitCommit(GitCommitParams),
+    #[serde(rename = "git.commit_message.generate")]
+    GitCommitMessageGenerate(GitCommitMessageGenerateParams),
     #[serde(rename = "git.diff.get")]
     GitDiffGet(GitDiffGetParams),
     #[serde(rename = "git.picker.list")]
@@ -270,6 +274,10 @@ pub enum Method {
     EventsWait(EventsWaitParams),
     #[serde(rename = "pane.wait_for_output")]
     PaneWaitForOutput(PaneWaitForOutputParams),
+    #[serde(rename = "commit_agent.list")]
+    CommitAgentList(EmptyParams),
+    #[serde(rename = "commit_agent.set_active")]
+    CommitAgentSetActive(CommitAgentSetActiveParams),
     #[serde(rename = "integration.list")]
     IntegrationList(EmptyParams),
     #[serde(rename = "integration.install")]

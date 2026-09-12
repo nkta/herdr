@@ -1753,6 +1753,17 @@
           ],
           "type": "object"
         },
+        "CommitAgentSetActiveParams": {
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
         "EmptyParams": {
           "type": "object"
         },
@@ -2157,6 +2168,17 @@
           "required": [
             "workspace_id",
             "name"
+          ],
+          "type": "object"
+        },
+        "GitCommitMessageGenerateParams": {
+          "properties": {
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id"
           ],
           "type": "object"
         },
@@ -5393,6 +5415,22 @@
         {
           "properties": {
             "method": {
+              "const": "git.commit_message.generate",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitCommitMessageGenerateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "git.diff.get",
               "type": "string"
             },
@@ -6545,6 +6583,38 @@
         {
           "properties": {
             "method": {
+              "const": "commit_agent.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "commit_agent.set_active",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/CommitAgentSetActiveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "integration.list",
               "type": "string"
             },
@@ -7227,6 +7297,26 @@
             "no_foreground_client"
           ],
           "type": "string"
+        },
+        "CommitAgentInfo": {
+          "description": "One configured commit-message-generation agent, as exposed to a client (the invocation\n`args` stay server-only — a client only needs enough to label a choice).",
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "command"
+          ],
+          "type": "object"
         },
         "ConfigReloadStatus": {
           "enum": [
@@ -10658,6 +10748,65 @@
                 "type",
                 "changed",
                 "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "git_commit_message_generated",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "message"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "active": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "agents": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/CommitAgentInfo"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "commit_agent_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "agents"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "active": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "const": "commit_agent_set_active",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
               ],
               "type": "object"
             },

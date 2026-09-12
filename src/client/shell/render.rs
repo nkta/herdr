@@ -250,6 +250,7 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) workspace_drop_indicator_row: Option<u16>,
     pub(super) sidebar_view: SidebarSpacesView,
     pub(super) git_panel: &'a ClientGitPanelState,
+    pub(super) commit_agent_generate_supported: bool,
 }
 
 pub(super) fn render_shell(

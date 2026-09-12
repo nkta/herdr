@@ -848,6 +848,12 @@
           "description": "Toggle sidebar collapse."
         },
         {
+          "key": "keys.toggle_sidebar_git_view",
+          "type": "keybinding",
+          "default": "\"prefix+t\"",
+          "description": "Toggle the sidebar's SPACES/GIT view."
+        },
+        {
           "key": "keys.indexed.tabs",
           "type": "string",
           "default": "unset",
@@ -1448,6 +1454,18 @@
           "type": "string",
           "default": "\"~/.herdr/worktrees\"",
           "description": "Root directory under which Herdr creates <repo>/<branch-slug> checkouts."
+        }
+      ]
+    },
+    {
+      "id": "commit_agents",
+      "title": "Commit agents",
+      "keys": [
+        {
+          "key": "commit_agents.active",
+          "type": "string",
+          "default": "\"claude\"",
+          "description": "Id of the configured commit-message-generation agent used by the Git panel's ctrl+g shortcut. `[[commit_agents.agents]]` is user-defined and not listed per key here; see Commit message agents in Configuration."
         }
       ]
     },

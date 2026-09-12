@@ -42,6 +42,10 @@ impl ClientShellState {
             integration_messages: Vec::new(),
             loading_integrations: false,
             installing_integrations: false,
+            commit_agents: Vec::new(),
+            commit_agent_active: None,
+            loading_commit_agents: false,
+            commit_agent_error: None,
         }));
     }
 
@@ -51,7 +55,7 @@ impl ClientShellState {
             ClientSettingsSection::Indicators => indicator_index(self.config.status_indicators),
             ClientSettingsSection::Sound => usize::from(!self.config.sound_enabled),
             ClientSettingsSection::Toast => toast_index(self.config.toast_delivery),
-            ClientSettingsSection::Integrations => 0,
+            ClientSettingsSection::CommitAgent | ClientSettingsSection::Integrations => 0,
         }
     }
 
@@ -70,12 +74,23 @@ impl ClientShellState {
                     ..
                 }))
             );
+        let request_commit_agents = matches!(section, ClientSettingsSection::CommitAgent)
+            && matches!(
+                self.overlay,
+                Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
+                    loading_commit_agents: false,
+                    ..
+                }))
+            );
         if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
             settings.section = section;
             settings.selected = selected;
         }
         if request_integrations {
             self.queue_integration_list(outcome, true);
+        }
+        if request_commit_agents {
+            self.queue_commit_agent_list(outcome);
         }
         outcome.repaint = true;
     }
@@ -99,6 +114,7 @@ impl ClientShellState {
                 ClientSettingsSection::Theme => crate::config::THEME_NAMES.len(),
                 ClientSettingsSection::Indicators | ClientSettingsSection::Sound => 2,
                 ClientSettingsSection::Toast => 4,
+                ClientSettingsSection::CommitAgent => settings.commit_agents.len(),
                 ClientSettingsSection::Integrations => settings.integrations.len(),
             },
             _ => 0,
@@ -222,7 +238,39 @@ impl ClientShellState {
                     outcome,
                 );
             }
+            ClientSettingsSection::CommitAgent => {
+                let Some(id) = settings
+                    .commit_agents
+                    .get(selected)
+                    .map(|agent| agent.id.clone())
+                else {
+                    return;
+                };
+                self.push_endpoint_method_with_kind(
+                    crate::api::schema::Method::CommitAgentSetActive(
+                        crate::api::schema::CommitAgentSetActiveParams { id },
+                    ),
+                    PendingEndpointKind::CommitAgentSetActive,
+                    outcome,
+                );
+            }
             ClientSettingsSection::Integrations => self.install_recommended_integrations(outcome),
+        }
+    }
+
+    fn queue_commit_agent_list(&mut self, outcome: &mut ClientShellInput) {
+        if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
+            settings.loading_commit_agents = true;
+            settings.commit_agent_error = None;
+        }
+        if !self.push_endpoint_method_with_kind(
+            crate::api::schema::Method::CommitAgentList(crate::api::schema::EmptyParams::default()),
+            PendingEndpointKind::CommitAgentList,
+            outcome,
+        ) {
+            if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
+                settings.loading_commit_agents = false;
+            }
         }
     }
 
@@ -342,6 +390,52 @@ impl ClientShellState {
                     Vec::new()
                 };
                 (true, actions)
+            }
+            PendingEndpointKind::CommitAgentList => {
+                if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
+                    settings.loading_commit_agents = false;
+                    match result {
+                        Ok(crate::api::schema::ResponseResult::CommitAgentList {
+                            agents,
+                            active,
+                        }) => {
+                            settings.selected = agents
+                                .iter()
+                                .position(|agent| Some(&agent.id) == active.as_ref())
+                                .unwrap_or(0);
+                            settings.commit_agents = agents;
+                            settings.commit_agent_active = active;
+                        }
+                        Ok(_) => {
+                            settings.commit_agent_error = Some(
+                                "endpoint returned an unexpected commit agent list result".into(),
+                            );
+                        }
+                        Err(error) => settings.commit_agent_error = Some(error.message),
+                    }
+                }
+                (true, Vec::new())
+            }
+            PendingEndpointKind::CommitAgentSetActive => {
+                if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
+                    match result {
+                        Ok(crate::api::schema::ResponseResult::CommitAgentSetActive { active }) => {
+                            settings.selected = settings
+                                .commit_agents
+                                .iter()
+                                .position(|agent| Some(&agent.id) == active.as_ref())
+                                .unwrap_or(settings.selected);
+                            settings.commit_agent_active = active;
+                            settings.commit_agent_error = None;
+                        }
+                        Ok(_) => {
+                            settings.commit_agent_error =
+                                Some("endpoint returned an unexpected commit agent result".into());
+                        }
+                        Err(error) => settings.commit_agent_error = Some(error.message),
+                    }
+                }
+                (true, Vec::new())
             }
             _ => (false, Vec::new()),
         }

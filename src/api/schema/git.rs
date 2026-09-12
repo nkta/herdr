@@ -19,6 +19,11 @@ pub struct GitCommitParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GitCommitMessageGenerateParams {
+    pub workspace_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GitDiffGetParams {
     pub workspace_id: String,
     pub path: String,

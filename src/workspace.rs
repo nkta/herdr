@@ -23,7 +23,8 @@ use self::git::git_status_cache_key_for_space;
 pub(crate) use self::{git::git_status_snapshot_for_cwd_with_demand, tab::MovedPane};
 pub use self::{
     git::{
-        derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_branch_list, git_file_diff,
+        build_commit_message_prompt, derive_label_from_cwd, fallback_label_from_cwd,
+        generate_commit_message, git_branch, git_branch_list, git_cached_diff_text, git_file_diff,
         git_space_metadata, git_stash_list, git_status_cache_key, git_untracked_file_diff,
         git_working_tree_status, run_git_commit, run_git_file_action, DiffHunk, DiffLine,
         DiffLineKind, FileDiff, GitFileActionKind, GitFileEntry, GitFileStatusKind, GitListEntry,

@@ -889,11 +889,14 @@ impl ClientShellState {
                 return (repaint, Vec::new());
             }
             kind @ (PendingEndpointKind::IntegrationList
-            | PendingEndpointKind::IntegrationInstall) => {
+            | PendingEndpointKind::IntegrationInstall
+            | PendingEndpointKind::CommitAgentList
+            | PendingEndpointKind::CommitAgentSetActive) => {
                 return self.handle_settings_endpoint_result(kind, result);
             }
             kind @ (PendingEndpointKind::GitFileAction
             | PendingEndpointKind::GitCommit
+            | PendingEndpointKind::GitCommitMessageGenerate
             | PendingEndpointKind::GitDiffGet { .. }
             | PendingEndpointKind::GitPickerList) => {
                 return (self.handle_git_endpoint_result(kind, result), Vec::new());

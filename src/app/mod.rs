@@ -515,6 +515,8 @@ impl App {
             pane_scrollback_limit_bytes: config.advanced.scrollback_limit_bytes,
             sound: config.ui.sound.clone(),
             toast_config: config.ui.toast.clone(),
+            commit_agents: config.commit_agents.agents.clone(),
+            active_commit_agent: config.commit_agents.active.clone(),
             keybinds: config.keybinds(),
             palette: theme_palette,
             theme_name,
@@ -865,6 +867,12 @@ impl App {
                 self.state.sound = config.ui.sound.clone();
                 self.state.toast_config = config.ui.toast.clone();
             }
+        }
+
+        if !invalid_section("commit_agents") {
+            self.state.commit_agents = config.commit_agents.agents.clone();
+            self.state.active_commit_agent = config.commit_agents.active.clone();
+            diagnostics.extend(config.commit_agents.diagnostics());
         }
 
         let graphics_config_valid = !invalid_section("terminal")

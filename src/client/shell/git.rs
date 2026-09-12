@@ -253,6 +253,29 @@ impl ClientShellState {
         );
     }
 
+    /// Generates a commit message with the active commit agent, replacing any draft already in
+    /// the commit box. Runs server-side (`git.commit_message.generate`): the server owns the
+    /// worktree and the configured agent binary.
+    fn generate_commit_message(&mut self, outcome: &mut ClientShellInput) {
+        if self.git_panel.generating_commit_message || self.git_panel.commit_in_flight {
+            return;
+        }
+        let Some(workspace_id) = self.focused_git_workspace_id() else {
+            return;
+        };
+        self.git_panel.generating_commit_message = true;
+        outcome.repaint = true;
+        if !self.push_endpoint_method_with_kind(
+            crate::api::schema::Method::GitCommitMessageGenerate(
+                crate::api::schema::GitCommitMessageGenerateParams { workspace_id },
+            ),
+            PendingEndpointKind::GitCommitMessageGenerate,
+            outcome,
+        ) {
+            self.git_panel.generating_commit_message = false;
+        }
+    }
+
     /// Routes a key to the Git panel while it is open. Returns whether the key was consumed —
     /// callers must not forward a consumed key to the focused pane or ordinary keybind
     /// resolution.
@@ -339,6 +362,10 @@ impl ClientShellState {
                     outcome.repaint = true;
                     true
                 }
+                KeyCode::Char('g') if modifiers == KeyModifiers::CONTROL => {
+                    self.generate_commit_message(outcome);
+                    true
+                }
                 KeyCode::Char(c)
                     if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
@@ -378,6 +405,25 @@ impl ClientShellState {
                     Err(error) => {
                         self.git_panel.last_error = Some(error.message);
                     }
+                }
+                true
+            }
+            PendingEndpointKind::GitCommitMessageGenerate => {
+                self.git_panel.generating_commit_message = false;
+                match result {
+                    Ok(crate::api::schema::ResponseResult::GitCommitMessageGenerated {
+                        message,
+                    }) => {
+                        self.git_panel.commit_message = message;
+                        self.git_panel.last_error = None;
+                    }
+                    Ok(_) => {
+                        self.git_panel.last_error = Some(
+                            "endpoint returned an unexpected commit message generation result"
+                                .into(),
+                        );
+                    }
+                    Err(error) => self.git_panel.last_error = Some(error.message),
                 }
                 true
             }
@@ -747,6 +793,72 @@ mod tests {
             &request.method,
             crate::api::schema::Method::GitCommit(params) if params.message == "fix bug"
         ));
+    }
+
+    #[test]
+    fn ctrl_g_requests_commit_message_generation() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        let mut outcome = ClientShellInput::default();
+
+        let consumed = state.route_git_panel_key(&ctrl_key(KeyCode::Char('g')), &mut outcome);
+
+        assert!(consumed);
+        assert!(state.git_panel.generating_commit_message);
+        assert_eq!(outcome.actions.len(), 1);
+        let ClientShellAction::Endpoint { request, .. } = &outcome.actions[0] else {
+            panic!("expected an endpoint action");
+        };
+        assert!(matches!(
+            &request.method,
+            crate::api::schema::Method::GitCommitMessageGenerate(_)
+        ));
+    }
+
+    #[test]
+    fn commit_message_generation_replaces_an_existing_draft() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "old draft".into();
+        state.git_panel.generating_commit_message = true;
+
+        let repaint = state.handle_git_endpoint_result(
+            PendingEndpointKind::GitCommitMessageGenerate,
+            Ok(
+                crate::api::schema::ResponseResult::GitCommitMessageGenerated {
+                    message: "fix: handle edge case".into(),
+                },
+            ),
+        );
+
+        assert!(repaint);
+        assert!(!state.git_panel.generating_commit_message);
+        assert_eq!(state.git_panel.commit_message, "fix: handle edge case");
+        assert!(state.git_panel.last_error.is_none());
+    }
+
+    #[test]
+    fn commit_message_generation_failure_keeps_the_draft_and_reports_the_error() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "old draft".into();
+        state.git_panel.generating_commit_message = true;
+
+        let repaint = state.handle_git_endpoint_result(
+            PendingEndpointKind::GitCommitMessageGenerate,
+            Err(ClientShellEndpointError {
+                code: Some("commit_message_generation_failed".into()),
+                message: "\"claude\" produced no output".into(),
+            }),
+        );
+
+        assert!(repaint);
+        assert!(!state.git_panel.generating_commit_message);
+        assert_eq!(state.git_panel.commit_message, "old draft");
+        assert_eq!(
+            state.git_panel.last_error.as_deref(),
+            Some("\"claude\" produced no output")
+        );
     }
 
     #[test]

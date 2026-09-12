@@ -194,6 +194,9 @@ pub(super) fn render_settings_overlay(
                 &mut choice_hits,
             );
         }
+        ClientSettingsSection::CommitAgent => {
+            render_commit_agent_section(buffer, content, settings, palette);
+        }
         ClientSettingsSection::Integrations => {
             render_integrations(buffer, content, settings, palette);
         }
@@ -291,6 +294,86 @@ fn render_choice_section(
         let rect = Rect::new(area.x, y, area.width, 1);
         draw_choice(buffer, rect, choice, index == selected, false, palette);
         hits.push((rect, index));
+    }
+}
+
+fn render_commit_agent_section(
+    buffer: &mut Buffer,
+    area: Rect,
+    settings: &ClientSettingsOverlay,
+    palette: &Palette,
+) {
+    put_text(
+        buffer,
+        area.x,
+        area.y,
+        area.width,
+        "commit message agent",
+        Style::default()
+            .fg(palette.text)
+            .bg(palette.panel_bg)
+            .add_modifier(Modifier::BOLD),
+    );
+    put_text(
+        buffer,
+        area.x,
+        area.y + 1,
+        area.width,
+        "generate a commit message with the active CLI agent (ctrl+g in the commit box)",
+        Style::default().fg(palette.overlay1).bg(palette.panel_bg),
+    );
+    if settings.loading_commit_agents {
+        put_text(
+            buffer,
+            area.x,
+            area.y + 3,
+            area.width,
+            " loading commit agents…",
+            Style::default().fg(palette.overlay1).bg(palette.panel_bg),
+        );
+        return;
+    }
+    if settings.commit_agents.is_empty() {
+        put_text(
+            buffer,
+            area.x,
+            area.y + 3,
+            area.width,
+            " no commit agents configured; edit [[commit_agents.agents]] in config.toml",
+            Style::default().fg(palette.overlay1).bg(palette.panel_bg),
+        );
+        return;
+    }
+    for (index, agent) in settings.commit_agents.iter().enumerate() {
+        let y = area.y + 3 + index as u16;
+        if y >= area.bottom() {
+            break;
+        }
+        let current = Some(&agent.id) == settings.commit_agent_active.as_ref();
+        draw_choice(
+            buffer,
+            Rect::new(area.x, y, area.width, 1),
+            &format!("{}  ({})", agent.label, agent.command),
+            index == settings.selected,
+            current,
+            palette,
+        );
+    }
+    if let Some(error) = &settings.commit_agent_error {
+        let y = area
+            .y
+            .saturating_add(4)
+            .saturating_add(settings.commit_agents.len() as u16);
+        if y < area.bottom() {
+            put_text(
+                buffer,
+                area.x,
+                y,
+                area.width,
+                &format!(" {error}"),
+                Style::default().fg(palette.overlay1).bg(palette.panel_bg),
+            );
+        }
     }
 }
 

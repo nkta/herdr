@@ -1,4 +1,5 @@
 mod actions;
+mod commit_agent;
 mod config;
 #[cfg(test)]
 mod config_tests;
@@ -14,7 +15,11 @@ pub(crate) use self::discovery::automatic_workspace_label;
 
 pub use self::{
     actions::{run_git_commit, run_git_file_action, GitFileActionKind},
-    diff::{git_file_diff, git_untracked_file_diff, DiffHunk, DiffLine, DiffLineKind, FileDiff},
+    commit_agent::{build_commit_message_prompt, generate_commit_message},
+    diff::{
+        git_cached_diff_text, git_file_diff, git_untracked_file_diff, DiffHunk, DiffLine,
+        DiffLineKind, FileDiff,
+    },
     discovery::{
         derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_space_metadata,
         GitSpaceMetadata,

@@ -4,6 +4,10 @@ pub(crate) enum ConfigEdit<'a> {
     StatusIndicators(super::StatusIndicatorStyle),
     Sound(bool),
     ToastDelivery(super::ToastDelivery),
+    /// Sets `[commit_agents] active`. Unlike the other variants, this is applied from the
+    /// server (the active commit agent is a server-side setting, since the agent binary runs
+    /// on whichever machine hosts the git worktree), not from the client settings overlay.
+    CommitAgentActive(&'a str),
 }
 
 impl ConfigEdit<'_> {
@@ -13,6 +17,7 @@ impl ConfigEdit<'_> {
             Self::StatusIndicators(_) => "status indicators",
             Self::Sound(_) => "sound setting",
             Self::ToastDelivery(_) => "toast setting",
+            Self::CommitAgentActive(_) => "active commit agent",
         }
     }
 
@@ -42,6 +47,12 @@ impl ConfigEdit<'_> {
                 let content = super::upsert_section_value(content, "ui.toast", "delivery", value);
                 super::remove_section_key(&content, "ui.toast", "enabled")
             }
+            Self::CommitAgentActive(id) => super::upsert_section_value(
+                content,
+                "commit_agents",
+                "active",
+                &format!("\"{id}\""),
+            ),
         }
     }
 }

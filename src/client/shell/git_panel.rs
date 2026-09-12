@@ -57,6 +57,7 @@ pub(super) fn render_git_panel(
     area: Rect,
     workspace: Option<&crate::protocol::ClientShellWorkspace>,
     git_panel: &ClientGitPanelState,
+    commit_agent_generate_supported: bool,
     palette: &Palette,
 ) -> (Vec<(Rect, usize)>, Rect) {
     if area.is_empty() {
@@ -136,7 +137,14 @@ pub(super) fn render_git_panel(
     // The commit box always claims its two rows at the bottom, so the file list shrinks first.
     let commit_box_top = area.bottom().saturating_sub(2).max(y);
     let list_bottom = commit_box_top;
-    render_commit_box(buffer, area, commit_box_top, git_panel, palette);
+    render_commit_box(
+        buffer,
+        area,
+        commit_box_top,
+        git_panel,
+        commit_agent_generate_supported,
+        palette,
+    );
     let commit_box_height = area.bottom().saturating_sub(commit_box_top).min(2);
     let commit_box_rect = if commit_box_height == 0 {
         Rect::default()
@@ -232,6 +240,7 @@ fn render_commit_box(
     area: Rect,
     top: u16,
     git_panel: &ClientGitPanelState,
+    commit_agent_generate_supported: bool,
     palette: &Palette,
 ) {
     if top >= area.bottom() {
@@ -240,6 +249,10 @@ fn render_commit_box(
     let focused = git_panel.focus == GitSidebarFocus::CommitBox;
     let header = if git_panel.commit_in_flight {
         " committing…"
+    } else if git_panel.generating_commit_message {
+        " generating…"
+    } else if commit_agent_generate_supported {
+        " COMMIT (ctrl+enter)  GENERATE (ctrl+g)"
     } else {
         " COMMIT (ctrl+enter)"
     };
@@ -333,7 +346,8 @@ mod tests {
         let mut buffer = Buffer::empty(area);
         let git_panel = ClientGitPanelState::default();
 
-        let (hits, _commit_box) = render_git_panel(&mut buffer, area, None, &git_panel, &palette);
+        let (hits, _commit_box) =
+            render_git_panel(&mut buffer, area, None, &git_panel, false, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("no focused workspace"));
@@ -348,7 +362,7 @@ mod tests {
         let ws = workspace(false, None);
 
         let (hits, _commit_box) =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("not a git repository"));
@@ -363,7 +377,7 @@ mod tests {
         let ws = workspace(true, None);
 
         let (hits, _commit_box) =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
 
         assert!(hits.is_empty());
         let text = buffer_text(&buffer);
@@ -380,7 +394,7 @@ mod tests {
         let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
 
         let (hits, _commit_box) =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("no changes"));
@@ -407,7 +421,7 @@ mod tests {
         let ws = workspace(true, Some(working_tree));
 
         let (hits, _commit_box) =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
 
         let text = buffer_text(&buffer);
         assert!(text.contains("main"));
@@ -440,7 +454,7 @@ mod tests {
         let ws = workspace(true, Some(working_tree));
 
         let (hits, commit_box) =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
 
         assert_eq!(commit_box.height, 2);
         assert_eq!(commit_box.y, area.bottom() - 2);
@@ -463,7 +477,14 @@ mod tests {
 
         let mut buffer_no_scroll = Buffer::empty(area);
         let no_scroll = ClientGitPanelState::default();
-        render_git_panel(&mut buffer_no_scroll, area, Some(&ws), &no_scroll, &palette);
+        render_git_panel(
+            &mut buffer_no_scroll,
+            area,
+            Some(&ws),
+            &no_scroll,
+            false,
+            &palette,
+        );
         assert!(buffer_text(&buffer_no_scroll).contains("STAGED CHANGES"));
 
         let mut buffer_scrolled = Buffer::empty(area);
@@ -472,8 +493,14 @@ mod tests {
             scroll: 1,
             ..Default::default()
         };
-        let (hits, _commit_box) =
-            render_git_panel(&mut buffer_scrolled, area, Some(&ws), &scrolled, &palette);
+        let (hits, _commit_box) = render_git_panel(
+            &mut buffer_scrolled,
+            area,
+            Some(&ws),
+            &scrolled,
+            false,
+            &palette,
+        );
         let text = buffer_text(&buffer_scrolled);
         assert!(!text.contains("STAGED CHANGES"));
         assert!(text.contains("staged.rs"));
@@ -507,7 +534,7 @@ mod tests {
         };
 
         let (hits, _commit_box) =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
 
         let selected_rect = hits.iter().find(|(_, index)| *index == 1).unwrap().0;
         let other_rect = hits.iter().find(|(_, index)| *index == 0).unwrap().0;

@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyModifiers};
 
+mod commit_agents;
 mod io;
 mod keybinds;
 mod model;
@@ -11,6 +12,7 @@ mod window_title;
 mod write;
 
 pub use self::{
+    commit_agents::{CommitAgentConfig, CommitAgentsConfig},
     io::{
         config_diagnostic_summary, config_dir, config_path, load_live_config,
         remove_keybinding_config_sections, remove_section_key, state_dir, upsert_section_bool,
@@ -126,6 +128,7 @@ impl Config {
             .chain(window_title_diagnostics(&self.ui.window_title))
             .chain(self.invalid_sidebar_bounds_diagnostic())
             .chain(self.invalid_headless_size_diagnostic())
+            .chain(self.commit_agents.diagnostics())
             .collect()
     }
 

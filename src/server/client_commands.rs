@@ -15,10 +15,13 @@ const ENDPOINT_RESPONSE_CHUNK_BYTES: usize = 512 * 1024;
 const CLIENT_SHELL_METHODS: &[&str] = &[
     "client_shell.surface.set",
     "command.invoke",
+    "commit_agent.list",
+    "commit_agent.set_active",
     "git.branch.create",
     "git.branch.delete",
     "git.branch.switch",
     "git.commit",
+    "git.commit_message.generate",
     "git.diff.get",
     "git.file.discard",
     "git.file.stage",

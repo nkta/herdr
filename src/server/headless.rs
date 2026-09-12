@@ -3069,6 +3069,7 @@ impl HeadlessServer {
                 | api::schema::Method::GitFileUnstage(_)
                 | api::schema::Method::GitFileDiscard(_)
                 | api::schema::Method::GitCommit(_)
+                | api::schema::Method::GitCommitMessageGenerate(_)
                 | api::schema::Method::GitDiffGet(_)
                 | api::schema::Method::GitPickerList(_)
         ) {

@@ -175,6 +175,12 @@ pub enum AppEvent {
         respond_to: std::sync::mpsc::Sender<String>,
         result: Result<(), String>,
     },
+    /// A background commit-message generation (external agent CLI) finished.
+    GitCommitMessageGenerated {
+        request_id: String,
+        respond_to: std::sync::mpsc::Sender<String>,
+        result: Result<String, String>,
+    },
     /// A configured tab bar status command finished.
     TabBarCommandFinished {
         generation: u64,
