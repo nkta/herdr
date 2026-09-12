@@ -176,6 +176,24 @@ pub(super) fn render_mode_bar(
                     ]);
                 }
             }
+            ClientShellMode::SidebarGit => {
+                segments.extend([
+                    (" GIT ".to_owned(), mode_style),
+                    (" ".to_owned(), base),
+                    ("tab".to_owned(), key),
+                    (" file list/commit  ".to_owned(), base),
+                    ("j/k".to_owned(), key),
+                    (" select  ".to_owned(), base),
+                    ("s/u/d".to_owned(), key),
+                    (" stage/unstage/discard  ".to_owned(), base),
+                    ("enter".to_owned(), key),
+                    (" diff  ".to_owned(), base),
+                    ("m".to_owned(), key),
+                    (" menu  ".to_owned(), base),
+                    ("esc".to_owned(), key),
+                    (" back".to_owned(), base),
+                ]);
+            }
             ClientShellMode::Terminal => unreachable!(),
         }
     }

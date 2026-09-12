@@ -1967,6 +1967,20 @@ impl ClientShellState {
                 }
                 if super::contains(self.hits.git_commit_box, point) {
                     self.git_panel.focus = GitSidebarFocus::CommitBox;
+                    self.mode = ClientShellMode::SidebarGit;
+                    outcome.repaint = true;
+                    return;
+                }
+                if let Some(index) = self
+                    .hits
+                    .git_panel_rows
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .map(|(_, index)| *index)
+                {
+                    self.git_panel.focus = GitSidebarFocus::FileList;
+                    self.git_panel.selected = index;
+                    self.mode = ClientShellMode::SidebarGit;
                     outcome.repaint = true;
                     return;
                 }
@@ -2019,6 +2033,7 @@ impl ClientShellState {
                     outcome.repaint = true;
                     outcome.resize = true;
                     self.persist_chrome_preferences(outcome);
+                    self.release_sidebar_git_focus_if_hidden(outcome);
                     return;
                 }
                 let group_toggle = self.hits.workspaces.iter().find_map(|hit| {

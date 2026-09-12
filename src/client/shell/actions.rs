@@ -18,6 +18,7 @@ impl ClientShellState {
                 outcome.repaint = true;
                 outcome.resize = true;
                 self.persist_chrome_preferences(outcome);
+                self.release_sidebar_git_focus_if_hidden(outcome);
             }
             crate::input::KeybindMatch::Action(
                 crate::input::KeybindAction::ToggleSidebarGitView,

@@ -331,6 +331,11 @@ pub(super) enum ClientShellMode {
     Navigate,
     Resize,
     Copy,
+    /// The Git panel's file list or commit box has keyboard focus. Entered only by clicking into
+    /// the panel (a file row or the commit box), never merely by the "git" tab being the active
+    /// `SidebarSpacesView` — otherwise every keystroke typed into a pane would be swallowed by
+    /// the panel's shortcuts (`m`, `s`, `u`, `d`, ...) whenever the tab happened to be selected.
+    SidebarGit,
 }
 
 /// Which tab is active in the sidebar's top section: the workspace list, or the Git panel.

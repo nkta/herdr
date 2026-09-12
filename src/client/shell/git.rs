@@ -22,6 +22,20 @@ impl ClientShellState {
         self.git_panel = ClientGitPanelState::default();
         outcome.repaint = true;
         self.sync_git_panel_watch(outcome);
+        self.release_sidebar_git_focus_if_hidden(outcome);
+    }
+
+    /// Hands the keyboard back to the pane when the Git panel stops being visible (tab switched
+    /// away, or the sidebar collapsed). `ClientShellMode::SidebarGit` routes every keystroke into
+    /// the panel; leaving it active once the panel is hidden would either look frozen (keys land
+    /// in an invisible commit box) or let `s`/`u`/`d` act on a file the user can no longer see.
+    pub(super) fn release_sidebar_git_focus_if_hidden(&mut self, outcome: &mut ClientShellInput) {
+        let panel_visible = self.sidebar_view == SidebarSpacesView::Git && !self.sidebar_collapsed;
+        if panel_visible || self.mode != ClientShellMode::SidebarGit {
+            return;
+        }
+        self.mode = ClientShellMode::Terminal;
+        outcome.repaint = true;
     }
 
     /// Tells the server whether the focused workspace's git panel is currently visible in this
@@ -299,7 +313,8 @@ impl ClientShellState {
                     true
                 }
                 KeyCode::Esc if modifiers.is_empty() => {
-                    self.set_sidebar_view(SidebarSpacesView::Spaces, outcome);
+                    self.mode = ClientShellMode::Terminal;
+                    outcome.repaint = true;
                     true
                 }
                 _ => false,
@@ -332,7 +347,7 @@ impl ClientShellState {
                     true
                 }
                 KeyCode::Esc if modifiers.is_empty() => {
-                    self.git_panel.focus = GitSidebarFocus::FileList;
+                    self.mode = ClientShellMode::Terminal;
                     outcome.repaint = true;
                     true
                 }
@@ -744,6 +759,67 @@ mod tests {
 
         assert!(!state.git_panel.commit_in_flight);
         assert!(outcome.actions.is_empty());
+    }
+
+    #[test]
+    fn esc_in_file_list_releases_focus_without_changing_the_tab() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.mode = ClientShellMode::SidebarGit;
+        let mut outcome = ClientShellInput::default();
+
+        let consumed = state.route_git_panel_key(&key(KeyCode::Esc), &mut outcome);
+
+        assert!(consumed);
+        assert_eq!(state.mode, ClientShellMode::Terminal);
+        assert_eq!(state.sidebar_view, SidebarSpacesView::Git);
+    }
+
+    #[test]
+    fn esc_in_commit_box_releases_focus_without_changing_the_tab() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.mode = ClientShellMode::SidebarGit;
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        let mut outcome = ClientShellInput::default();
+
+        let consumed = state.route_git_panel_key(&key(KeyCode::Esc), &mut outcome);
+
+        assert!(consumed);
+        assert_eq!(state.mode, ClientShellMode::Terminal);
+        assert_eq!(state.sidebar_view, SidebarSpacesView::Git);
+    }
+
+    #[test]
+    fn switching_away_from_the_git_tab_releases_panel_focus() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.mode = ClientShellMode::SidebarGit;
+        let mut outcome = ClientShellInput::default();
+
+        state.set_sidebar_view(SidebarSpacesView::Spaces, &mut outcome);
+
+        assert_eq!(state.mode, ClientShellMode::Terminal);
+    }
+
+    #[test]
+    fn collapsing_the_sidebar_releases_panel_focus() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.mode = ClientShellMode::SidebarGit;
+        state.sidebar_collapsed = true;
+        let mut outcome = ClientShellInput::default();
+
+        state.release_sidebar_git_focus_if_hidden(&mut outcome);
+
+        assert_eq!(state.mode, ClientShellMode::Terminal);
+    }
+
+    #[test]
+    fn panel_focus_is_kept_while_the_tab_stays_visible() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.mode = ClientShellMode::SidebarGit;
+        let mut outcome = ClientShellInput::default();
+
+        state.release_sidebar_git_focus_if_hidden(&mut outcome);
+
+        assert_eq!(state.mode, ClientShellMode::SidebarGit);
     }
 
     #[test]

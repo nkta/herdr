@@ -554,11 +554,6 @@ impl ClientShellState {
 
         match self.mode {
             ClientShellMode::Terminal => {
-                if self.sidebar_view == SidebarSpacesView::Git
-                    && self.route_git_panel_key(key, outcome)
-                {
-                    return None;
-                }
                 if let Some(binding) =
                     crate::input::resolve_direct_binding(&self.config.keybinds.keybinds, key)
                 {
@@ -604,6 +599,10 @@ impl ClientShellState {
             }
             ClientShellMode::Navigate => {
                 self.route_navigate_key(key, outcome);
+                None
+            }
+            ClientShellMode::SidebarGit => {
+                self.route_git_panel_key(key, outcome);
                 None
             }
             ClientShellMode::Resize => {
