@@ -139,12 +139,11 @@ pub(super) fn render_git_panel(
         return (Vec::new(), Rect::default());
     }
 
-    // The commit box grows with the wrapped draft (capped at COMMIT_BOX_MESSAGE_ROWS) and always
-    // claims its rows at the bottom, so the file list shrinks first.
+    // The commit box is always a real multi-row text field — not just when the draft is long —
+    // and always claims its rows at the bottom, so the file list shrinks first.
     let wrap_width = area.width.saturating_sub(1);
     let wrapped_message = wrap_commit_message(&git_panel.commit_message, wrap_width);
-    let message_rows = (wrapped_message.len() as u16).clamp(1, COMMIT_BOX_MESSAGE_ROWS);
-    let desired_commit_box_height = message_rows.saturating_add(1);
+    let desired_commit_box_height = COMMIT_BOX_MESSAGE_ROWS.saturating_add(1);
     let commit_box_top = area
         .bottom()
         .saturating_sub(desired_commit_box_height)
@@ -481,7 +480,7 @@ mod tests {
     #[test]
     fn renders_branch_ahead_behind_and_file_rows() {
         let palette = test_palette();
-        let area = Rect::new(0, 0, 30, 10);
+        let area = Rect::new(0, 0, 30, 16);
         let mut buffer = Buffer::empty(area);
         let git_panel = ClientGitPanelState::default();
         let working_tree = ClientShellGitWorkingTree {
@@ -534,8 +533,8 @@ mod tests {
         let (hits, commit_box) =
             render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
 
-        assert_eq!(commit_box.height, 2);
-        assert_eq!(commit_box.y, area.bottom() - 2);
+        assert_eq!(commit_box.height, COMMIT_BOX_MESSAGE_ROWS + 1);
+        assert_eq!(commit_box.y, area.bottom() - (COMMIT_BOX_MESSAGE_ROWS + 1));
         assert!(hits.iter().all(|(rect, _)| rect.y < commit_box.y));
     }
 
@@ -606,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_box_grows_for_a_longer_wrapped_message_and_stays_capped() {
+    fn commit_box_height_is_fixed_regardless_of_message_length() {
         let palette = test_palette();
         let area = Rect::new(0, 0, 30, 20);
         let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
@@ -618,7 +617,6 @@ mod tests {
         };
         let (_, short_box) =
             render_git_panel(&mut buffer_short, area, Some(&ws), &short, false, &palette);
-        assert_eq!(short_box.height, 2);
 
         let mut buffer_long = Buffer::empty(area);
         let long = ClientGitPanelState {
@@ -629,8 +627,30 @@ mod tests {
         };
         let (_, long_box) =
             render_git_panel(&mut buffer_long, area, Some(&ws), &long, false, &palette);
-        assert!(long_box.height > short_box.height);
-        assert!(long_box.height <= COMMIT_BOX_MESSAGE_ROWS + 1);
+
+        assert_eq!(short_box.height, COMMIT_BOX_MESSAGE_ROWS + 1);
+        assert_eq!(long_box.height, COMMIT_BOX_MESSAGE_ROWS + 1);
+    }
+
+    #[test]
+    fn commit_box_scrolls_to_show_the_tail_of_a_message_taller_than_the_box() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 20);
+        let mut buffer = Buffer::empty(area);
+        let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        let git_panel = ClientGitPanelState {
+            commit_message: "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight".into(),
+            ..Default::default()
+        };
+
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, false, &palette);
+
+        let text = buffer_text(&buffer);
+        assert!(!text.contains("one"));
+        assert!(!text.contains("two"));
+        assert!(!text.contains("three"));
+        assert!(text.contains("four"));
+        assert!(text.contains("eight"));
     }
 
     #[test]
