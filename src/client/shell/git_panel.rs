@@ -49,17 +49,18 @@ fn panel_lines(working_tree: &crate::protocol::ClientShellGitWorkingTree) -> Vec
     lines
 }
 
-/// Renders the sidebar's Git panel for the focused workspace, and returns the hit-test rect for
-/// each rendered file row keyed by its index into `panel_lines`'s `File` entries.
+/// Renders the sidebar's Git panel for the focused workspace. Returns the hit-test rect for
+/// each rendered file row keyed by its index into `panel_lines`'s `File` entries, plus the
+/// commit box's own hit-test rect (empty when the box wasn't drawn, e.g. no room or no repo).
 pub(super) fn render_git_panel(
     buffer: &mut Buffer,
     area: Rect,
     workspace: Option<&crate::protocol::ClientShellWorkspace>,
     git_panel: &ClientGitPanelState,
     palette: &Palette,
-) -> Vec<(Rect, usize)> {
+) -> (Vec<(Rect, usize)>, Rect) {
     if area.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Rect::default());
     }
     let Some(workspace) = workspace else {
         put_text(
@@ -70,7 +71,7 @@ pub(super) fn render_git_panel(
             " no focused workspace",
             Style::default().fg(palette.overlay0),
         );
-        return Vec::new();
+        return (Vec::new(), Rect::default());
     };
     if !workspace.git_repo {
         put_text(
@@ -81,7 +82,7 @@ pub(super) fn render_git_panel(
             " not a git repository",
             Style::default().fg(palette.overlay0),
         );
-        return Vec::new();
+        return (Vec::new(), Rect::default());
     }
 
     let mut y = area.y;
@@ -102,7 +103,7 @@ pub(super) fn render_git_panel(
     );
     y = y.saturating_add(1);
     if y >= area.bottom() {
-        return Vec::new();
+        return (Vec::new(), Rect::default());
     }
 
     if let Some(path) = &git_panel.pending_discard {
@@ -129,13 +130,19 @@ pub(super) fn render_git_panel(
         y = y.saturating_add(1);
     }
     if y >= area.bottom() {
-        return Vec::new();
+        return (Vec::new(), Rect::default());
     }
 
     // The commit box always claims its two rows at the bottom, so the file list shrinks first.
     let commit_box_top = area.bottom().saturating_sub(2).max(y);
     let list_bottom = commit_box_top;
     render_commit_box(buffer, area, commit_box_top, git_panel, palette);
+    let commit_box_height = area.bottom().saturating_sub(commit_box_top).min(2);
+    let commit_box_rect = if commit_box_height == 0 {
+        Rect::default()
+    } else {
+        Rect::new(area.x, commit_box_top, area.width, commit_box_height)
+    };
 
     let Some(working_tree) = workspace.git_working_tree.as_ref() else {
         if y < list_bottom {
@@ -148,7 +155,7 @@ pub(super) fn render_git_panel(
                 Style::default().fg(palette.overlay0),
             );
         }
-        return Vec::new();
+        return (Vec::new(), commit_box_rect);
     };
 
     let lines = panel_lines(working_tree);
@@ -163,7 +170,7 @@ pub(super) fn render_git_panel(
                 Style::default().fg(palette.overlay0),
             );
         }
-        return Vec::new();
+        return (Vec::new(), commit_box_rect);
     }
 
     let max_scroll = lines.len().saturating_sub(1);
@@ -214,7 +221,7 @@ pub(super) fn render_git_panel(
         }
         y = y.saturating_add(1);
     }
-    hits
+    (hits, commit_box_rect)
 }
 
 /// Renders the two-row commit box pinned to the bottom of the panel: a header naming the
@@ -326,7 +333,7 @@ mod tests {
         let mut buffer = Buffer::empty(area);
         let git_panel = ClientGitPanelState::default();
 
-        let hits = render_git_panel(&mut buffer, area, None, &git_panel, &palette);
+        let (hits, _commit_box) = render_git_panel(&mut buffer, area, None, &git_panel, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("no focused workspace"));
@@ -340,7 +347,8 @@ mod tests {
         let git_panel = ClientGitPanelState::default();
         let ws = workspace(false, None);
 
-        let hits = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        let (hits, _commit_box) =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("not a git repository"));
@@ -354,7 +362,8 @@ mod tests {
         let git_panel = ClientGitPanelState::default();
         let ws = workspace(true, None);
 
-        let hits = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        let (hits, _commit_box) =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         assert!(hits.is_empty());
         let text = buffer_text(&buffer);
@@ -370,7 +379,8 @@ mod tests {
         let git_panel = ClientGitPanelState::default();
         let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
 
-        let hits = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        let (hits, _commit_box) =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("no changes"));
@@ -396,7 +406,8 @@ mod tests {
         };
         let ws = workspace(true, Some(working_tree));
 
-        let hits = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        let (hits, _commit_box) =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         let text = buffer_text(&buffer);
         assert!(text.contains("main"));
@@ -410,6 +421,30 @@ mod tests {
         assert_eq!(hits[0].1, 0);
         assert_eq!(hits[1].1, 1);
         assert!(hits[0].0.y < hits[1].0.y);
+    }
+
+    #[test]
+    fn commit_box_hit_rect_sits_below_the_file_rows() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 10);
+        let mut buffer = Buffer::empty(area);
+        let git_panel = ClientGitPanelState::default();
+        let working_tree = ClientShellGitWorkingTree {
+            staged: vec![ClientShellGitFileEntry {
+                path: "staged.rs".into(),
+                original_path: None,
+                status: ClientShellGitFileStatus::Added,
+            }],
+            unstaged: Vec::new(),
+        };
+        let ws = workspace(true, Some(working_tree));
+
+        let (hits, commit_box) =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+
+        assert_eq!(commit_box.height, 2);
+        assert_eq!(commit_box.y, area.bottom() - 2);
+        assert!(hits.iter().all(|(rect, _)| rect.y < commit_box.y));
     }
 
     #[test]
@@ -437,7 +472,8 @@ mod tests {
             scroll: 1,
             ..Default::default()
         };
-        let hits = render_git_panel(&mut buffer_scrolled, area, Some(&ws), &scrolled, &palette);
+        let (hits, _commit_box) =
+            render_git_panel(&mut buffer_scrolled, area, Some(&ws), &scrolled, &palette);
         let text = buffer_text(&buffer_scrolled);
         assert!(!text.contains("STAGED CHANGES"));
         assert!(text.contains("staged.rs"));
@@ -470,7 +506,8 @@ mod tests {
             ..Default::default()
         };
 
-        let hits = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        let (hits, _commit_box) =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         let selected_rect = hits.iter().find(|(_, index)| *index == 1).unwrap().0;
         let other_rect = hits.iter().find(|(_, index)| *index == 0).unwrap().0;

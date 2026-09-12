@@ -215,7 +215,7 @@ pub(crate) fn render_sidebar(
                 .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
         );
         hits.workspace_body = body;
-        hits.git_panel_rows = super::git_panel::render_git_panel(
+        (hits.git_panel_rows, hits.git_commit_box) = super::git_panel::render_git_panel(
             buffer,
             body,
             focused_workspace,

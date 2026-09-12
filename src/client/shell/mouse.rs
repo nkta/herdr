@@ -1965,6 +1965,11 @@ impl ClientShellState {
                     self.set_sidebar_view(SidebarSpacesView::Git, outcome);
                     return;
                 }
+                if super::contains(self.hits.git_commit_box, point) {
+                    self.git_panel.focus = GitSidebarFocus::CommitBox;
+                    outcome.repaint = true;
+                    return;
+                }
                 if super::contains(self.hits.new_workspace, point) {
                     self.record_binding(
                         crate::input::KeybindMatch::Action(
