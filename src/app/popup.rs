@@ -39,7 +39,11 @@ impl App {
         extra_env: Vec<(String, String)>,
         geometry: PopupGeometry,
     ) -> std::io::Result<()> {
+        let Some(ws_idx) = self.state.active else {
+            return Err(std::io::Error::other("no active workspace"));
+        };
         self.spawn_popup_command(
+            ws_idx,
             cwd,
             extra_env,
             geometry,
@@ -71,7 +75,26 @@ impl App {
         extra_env: Vec<(String, String)>,
         geometry: PopupGeometry,
     ) -> std::io::Result<()> {
+        let Some(ws_idx) = self.state.active else {
+            return Err(std::io::Error::other("no active workspace"));
+        };
+        self.spawn_popup_argv_command_in_workspace(ws_idx, argv, cwd, extra_env, geometry)
+    }
+
+    /// Same as [`spawn_popup_argv_command`](Self::spawn_popup_argv_command), but targets
+    /// `ws_idx` explicitly instead of the globally active workspace. Used for commands
+    /// triggered on behalf of a specific client-shell workspace, which may differ from the
+    /// server's notion of the "active" workspace in a multi-client session.
+    pub(crate) fn spawn_popup_argv_command_in_workspace(
+        &mut self,
+        ws_idx: usize,
+        argv: &[String],
+        cwd: Option<PathBuf>,
+        extra_env: Vec<(String, String)>,
+        geometry: PopupGeometry,
+    ) -> std::io::Result<()> {
         self.spawn_popup_command(
+            ws_idx,
             cwd,
             extra_env,
             geometry,
@@ -98,6 +121,7 @@ impl App {
 
     fn spawn_popup_command<F>(
         &mut self,
+        ws_idx: usize,
         cwd: Option<PathBuf>,
         extra_env: Vec<(String, String)>,
         geometry: PopupGeometry,
@@ -116,9 +140,6 @@ impl App {
         if self.state.popup_pane.is_some() {
             return Err(std::io::Error::other("popup already open"));
         }
-        let Some(ws_idx) = self.state.active else {
-            return Err(std::io::Error::other("no active workspace"));
-        };
         let ws = self
             .state
             .workspaces
@@ -267,6 +288,78 @@ mod tests {
         app.state.assert_invariants_for_test();
 
         assert!(app.state.popup_pane.is_some());
+    }
+
+    fn app_without_popup() -> App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("popup")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app
+    }
+
+    #[test]
+    fn spawn_popup_argv_command_errors_without_active_workspace() {
+        let mut app = app_without_popup();
+        app.state.active = None;
+
+        let err = app
+            .spawn_popup_argv_command(&["true".into()], None, Vec::new(), PopupGeometry::default())
+            .expect_err("no active workspace");
+
+        assert_eq!(err.to_string(), "no active workspace");
+    }
+
+    #[test]
+    fn spawn_popup_argv_command_errors_when_popup_already_open() {
+        let mut app = app_with_popup();
+
+        let err = app
+            .spawn_popup_argv_command(&["true".into()], None, Vec::new(), PopupGeometry::default())
+            .expect_err("popup already open");
+
+        assert_eq!(err.to_string(), "popup already open");
+    }
+
+    #[test]
+    fn spawn_popup_argv_command_in_workspace_errors_when_workspace_missing() {
+        let mut app = app_without_popup();
+
+        let err = app
+            .spawn_popup_argv_command_in_workspace(
+                7,
+                &["true".into()],
+                None,
+                Vec::new(),
+                PopupGeometry::default(),
+            )
+            .expect_err("workspace 7 does not exist");
+
+        assert_eq!(err.to_string(), "active workspace disappeared");
+    }
+
+    #[test]
+    fn spawn_popup_argv_command_in_workspace_errors_when_popup_already_open() {
+        let mut app = app_with_popup();
+
+        let err = app
+            .spawn_popup_argv_command_in_workspace(
+                0,
+                &["true".into()],
+                None,
+                Vec::new(),
+                PopupGeometry::default(),
+            )
+            .expect_err("popup already open");
+
+        assert_eq!(err.to_string(), "popup already open");
     }
 
     #[test]
