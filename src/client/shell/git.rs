@@ -2,12 +2,23 @@ use super::*;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 impl ClientShellState {
+    /// Bound to `prefix+t`. Shows the Git tab and gives it keyboard focus in one step; a second
+    /// press while it's already focused toggles back to Spaces. Without this, leaving focus with
+    /// `Esc` (which keeps the Git tab visible but unfocused) stranded the panel: pressing
+    /// `prefix+t` again just flipped straight to Spaces, since it always toggled between the two
+    /// views and never re-focused an already-visible one.
     pub(super) fn toggle_sidebar_git_view(&mut self, outcome: &mut ClientShellInput) {
-        let next = match self.sidebar_view {
-            SidebarSpacesView::Spaces => SidebarSpacesView::Git,
-            SidebarSpacesView::Git => SidebarSpacesView::Spaces,
-        };
-        self.set_sidebar_view(next, outcome);
+        let git_view_focused =
+            self.sidebar_view == SidebarSpacesView::Git && self.mode == ClientShellMode::SidebarGit;
+        if git_view_focused {
+            self.set_sidebar_view(SidebarSpacesView::Spaces, outcome);
+            return;
+        }
+        self.set_sidebar_view(SidebarSpacesView::Git, outcome);
+        if !self.sidebar_collapsed {
+            self.mode = ClientShellMode::SidebarGit;
+            outcome.repaint = true;
+        }
     }
 
     pub(super) fn set_sidebar_view(
@@ -932,6 +943,60 @@ mod tests {
         state.release_sidebar_git_focus_if_hidden(&mut outcome);
 
         assert_eq!(state.mode, ClientShellMode::SidebarGit);
+    }
+
+    #[test]
+    fn toggle_sidebar_git_view_from_spaces_shows_and_focuses_git() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.sidebar_view = SidebarSpacesView::Spaces;
+        state.mode = ClientShellMode::Terminal;
+        let mut outcome = ClientShellInput::default();
+
+        state.toggle_sidebar_git_view(&mut outcome);
+
+        assert_eq!(state.sidebar_view, SidebarSpacesView::Git);
+        assert_eq!(state.mode, ClientShellMode::SidebarGit);
+    }
+
+    #[test]
+    fn toggle_sidebar_git_view_refocuses_after_escape_instead_of_switching_to_spaces() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        // Git tab visible but unfocused, as left by Esc.
+        state.sidebar_view = SidebarSpacesView::Git;
+        state.mode = ClientShellMode::Terminal;
+        let mut outcome = ClientShellInput::default();
+
+        state.toggle_sidebar_git_view(&mut outcome);
+
+        assert_eq!(state.sidebar_view, SidebarSpacesView::Git);
+        assert_eq!(state.mode, ClientShellMode::SidebarGit);
+    }
+
+    #[test]
+    fn toggle_sidebar_git_view_switches_to_spaces_when_already_focused() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.sidebar_view = SidebarSpacesView::Git;
+        state.mode = ClientShellMode::SidebarGit;
+        let mut outcome = ClientShellInput::default();
+
+        state.toggle_sidebar_git_view(&mut outcome);
+
+        assert_eq!(state.sidebar_view, SidebarSpacesView::Spaces);
+        assert_eq!(state.mode, ClientShellMode::Terminal);
+    }
+
+    #[test]
+    fn toggle_sidebar_git_view_does_not_focus_a_collapsed_sidebar() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.sidebar_view = SidebarSpacesView::Spaces;
+        state.mode = ClientShellMode::Terminal;
+        state.sidebar_collapsed = true;
+        let mut outcome = ClientShellInput::default();
+
+        state.toggle_sidebar_git_view(&mut outcome);
+
+        assert_eq!(state.sidebar_view, SidebarSpacesView::Git);
+        assert_eq!(state.mode, ClientShellMode::Terminal);
     }
 
     #[test]
