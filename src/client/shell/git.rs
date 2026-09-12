@@ -294,6 +294,10 @@ impl ClientShellState {
                     self.open_git_diff_overlay(outcome);
                     true
                 }
+                KeyCode::Char('m') if modifiers.is_empty() => {
+                    self.open_git_repo_menu(outcome);
+                    true
+                }
                 KeyCode::Esc if modifiers.is_empty() => {
                     self.set_sidebar_view(SidebarSpacesView::Spaces, outcome);
                     true
@@ -385,8 +389,207 @@ impl ClientShellState {
                 }
                 true
             }
+            PendingEndpointKind::GitPickerList => {
+                let Some(ClientShellOverlay::GitPicker(picker)) = self.overlay.as_mut() else {
+                    return false;
+                };
+                picker.loading = false;
+                match result {
+                    Ok(crate::api::schema::ResponseResult::GitPickerList { entries }) => {
+                        picker.entries = entries;
+                        picker.selected = 0;
+                        picker.error = None;
+                    }
+                    Ok(_) => {
+                        picker.error = Some("endpoint returned an unexpected picker result".into());
+                    }
+                    Err(error) => {
+                        picker.error = Some(error.message);
+                    }
+                }
+                true
+            }
             _ => false,
         }
+    }
+
+    /// Opens the repository-wide command menu (fetch/pull/push/log/stash/branches) for the
+    /// focused workspace. Position is approximate — `render_context_menu` clamps it to the
+    /// screen, so this doesn't need the git panel's exact on-screen rect.
+    pub(super) fn open_git_repo_menu(&mut self, outcome: &mut ClientShellInput) {
+        let Some(workspace_id) = self.focused_git_workspace_id() else {
+            return;
+        };
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::GitRepo { workspace_id },
+            x: 2,
+            y: 3,
+            highlighted: 0,
+        }));
+        outcome.repaint = true;
+    }
+
+    pub(super) fn activate_git_repo_context_action(
+        &mut self,
+        workspace_id: String,
+        action: ClientContextMenuAction,
+        outcome: &mut ClientShellInput,
+    ) {
+        use crate::api::schema::{GitRepoCommandParams, Method};
+        use ClientContextMenuAction as Action;
+
+        match action {
+            Action::GitFetch => {
+                self.push_endpoint_method(
+                    Method::GitRepoFetch(GitRepoCommandParams { workspace_id }),
+                    outcome,
+                );
+            }
+            Action::GitPull => {
+                self.push_endpoint_method(
+                    Method::GitRepoPull(GitRepoCommandParams { workspace_id }),
+                    outcome,
+                );
+            }
+            Action::GitPush => {
+                self.push_endpoint_method(
+                    Method::GitRepoPush(GitRepoCommandParams { workspace_id }),
+                    outcome,
+                );
+            }
+            Action::GitLog => {
+                self.push_endpoint_method(
+                    Method::GitRepoLog(GitRepoCommandParams { workspace_id }),
+                    outcome,
+                );
+            }
+            Action::GitStashPush => {
+                self.push_endpoint_method(
+                    Method::GitStashPush(GitRepoCommandParams { workspace_id }),
+                    outcome,
+                );
+            }
+            Action::GitStashApply => {
+                self.open_git_picker(workspace_id, GitPickerPurpose::ApplyStash, outcome);
+            }
+            Action::GitNewBranch => {
+                self.open_git_branch_create_overlay(workspace_id);
+                outcome.repaint = true;
+            }
+            Action::GitSwitchBranch => {
+                self.open_git_picker(workspace_id, GitPickerPurpose::SwitchBranch, outcome);
+            }
+            Action::GitDeleteBranch => {
+                self.open_git_picker(workspace_id, GitPickerPurpose::DeleteBranch, outcome);
+            }
+            _ => {}
+        }
+    }
+
+    fn open_git_picker(
+        &mut self,
+        workspace_id: String,
+        purpose: GitPickerPurpose,
+        outcome: &mut ClientShellInput,
+    ) {
+        self.overlay = Some(ClientShellOverlay::GitPicker(ClientGitPickerOverlay {
+            workspace_id: workspace_id.clone(),
+            purpose,
+            entries: Vec::new(),
+            selected: 0,
+            loading: true,
+            error: None,
+        }));
+        outcome.repaint = true;
+        self.push_endpoint_method_with_kind(
+            crate::api::schema::Method::GitPickerList(crate::api::schema::GitPickerListParams {
+                workspace_id,
+                kind: purpose.kind(),
+            }),
+            PendingEndpointKind::GitPickerList,
+            outcome,
+        );
+    }
+
+    fn confirm_git_picker(&mut self, outcome: &mut ClientShellInput) {
+        let Some(ClientShellOverlay::GitPicker(picker)) = self.overlay.take() else {
+            return;
+        };
+        let Some(entry) = picker.entries.get(picker.selected) else {
+            return;
+        };
+        let value = entry.value.clone();
+        let method = match picker.purpose {
+            // `stash pop` rather than `apply`: leaving an applied stash on the stack is a
+            // common source of duplicate work later.
+            GitPickerPurpose::ApplyStash => {
+                crate::api::schema::Method::GitStashPop(crate::api::schema::GitStashPopParams {
+                    workspace_id: picker.workspace_id,
+                    stash_ref: value,
+                })
+            }
+            GitPickerPurpose::SwitchBranch => crate::api::schema::Method::GitBranchSwitch(
+                crate::api::schema::GitBranchNameParams {
+                    workspace_id: picker.workspace_id,
+                    name: value,
+                },
+            ),
+            GitPickerPurpose::DeleteBranch => crate::api::schema::Method::GitBranchDelete(
+                crate::api::schema::GitBranchNameParams {
+                    workspace_id: picker.workspace_id,
+                    name: value,
+                },
+            ),
+        };
+        self.push_endpoint_method(method, outcome);
+        outcome.repaint = true;
+    }
+
+    /// Routes a key while the stash/branch picker is open. Returns whether the key was consumed.
+    pub(super) fn route_git_picker_overlay_key(
+        &mut self,
+        key: &crate::input::TerminalKey,
+        outcome: &mut ClientShellInput,
+    ) -> bool {
+        let Some(ClientShellOverlay::GitPicker(picker)) = self.overlay.as_mut() else {
+            return false;
+        };
+        let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
+        match code {
+            KeyCode::Esc if modifiers.is_empty() => {
+                self.overlay = None;
+                outcome.repaint = true;
+                true
+            }
+            KeyCode::Up | KeyCode::Char('k') if modifiers.is_empty() => {
+                picker.selected = picker.selected.saturating_sub(1);
+                outcome.repaint = true;
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') if modifiers.is_empty() => {
+                picker.selected = picker
+                    .selected
+                    .saturating_add(1)
+                    .min(picker.entries.len().saturating_sub(1));
+                outcome.repaint = true;
+                true
+            }
+            KeyCode::Enter if modifiers.is_empty() => {
+                self.confirm_git_picker(outcome);
+                true
+            }
+            _ => true,
+        }
+    }
+
+    /// Opens the "new branch" text prompt, reusing the rename overlay's input machinery.
+    fn open_git_branch_create_overlay(&mut self, workspace_id: String) {
+        self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            title: "new branch",
+            input: String::new(),
+            replace_on_type: false,
+            target: ClientRenameTarget::GitBranchCreate { workspace_id },
+        }));
     }
 }
 
@@ -686,6 +889,198 @@ mod tests {
         let mut outcome = ClientShellInput::default();
 
         let consumed = state.route_git_diff_overlay_key(&key(KeyCode::Esc), &mut outcome);
+
+        assert!(consumed);
+        assert!(state.overlay.is_none());
+    }
+
+    #[test]
+    fn m_key_opens_the_repo_command_menu() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        let mut outcome = ClientShellInput::default();
+
+        let consumed = state.route_git_panel_key(&key(KeyCode::Char('m')), &mut outcome);
+
+        assert!(consumed);
+        let Some(ClientShellOverlay::ContextMenu(menu)) = &state.overlay else {
+            panic!("expected the repo command menu to open");
+        };
+        assert!(matches!(
+            &menu.target,
+            ClientContextMenuTarget::GitRepo { workspace_id } if !workspace_id.is_empty()
+        ));
+        let labels: Vec<&str> = menu.items().iter().map(|item| item.label).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Fetch",
+                "Pull",
+                "Push",
+                "View log",
+                "Stash changes",
+                "Apply stash...",
+                "New branch...",
+                "Switch branch...",
+                "Delete branch...",
+            ]
+        );
+    }
+
+    #[test]
+    fn fetch_action_sends_git_repo_fetch() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        let workspace_id = state.focused_git_workspace_id().unwrap();
+        let mut outcome = ClientShellInput::default();
+
+        state.activate_git_repo_context_action(
+            workspace_id,
+            ClientContextMenuAction::GitFetch,
+            &mut outcome,
+        );
+
+        assert_eq!(outcome.actions.len(), 1);
+        let ClientShellAction::Endpoint { request, .. } = &outcome.actions[0] else {
+            panic!("expected an endpoint action");
+        };
+        assert!(matches!(
+            &request.method,
+            crate::api::schema::Method::GitRepoFetch(_)
+        ));
+    }
+
+    #[test]
+    fn new_branch_action_opens_the_rename_prompt() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        let workspace_id = state.focused_git_workspace_id().unwrap();
+        let mut outcome = ClientShellInput::default();
+
+        state.activate_git_repo_context_action(
+            workspace_id,
+            ClientContextMenuAction::GitNewBranch,
+            &mut outcome,
+        );
+
+        assert!(matches!(
+            &state.overlay,
+            Some(ClientShellOverlay::Rename(rename))
+                if matches!(rename.target, ClientRenameTarget::GitBranchCreate { .. })
+        ));
+    }
+
+    #[test]
+    fn confirming_new_branch_sends_git_branch_create_with_the_trimmed_name() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            title: "new branch",
+            input: "  feature/x  ".into(),
+            replace_on_type: false,
+            target: ClientRenameTarget::GitBranchCreate {
+                workspace_id: "w1".into(),
+            },
+        }));
+        let mut outcome = ClientShellInput::default();
+
+        state.save_rename_overlay(&mut outcome);
+
+        assert_eq!(outcome.actions.len(), 1);
+        let ClientShellAction::Endpoint { request, .. } = &outcome.actions[0] else {
+            panic!("expected an endpoint action");
+        };
+        assert!(matches!(
+            &request.method,
+            crate::api::schema::Method::GitBranchCreate(params) if params.name == "feature/x"
+        ));
+    }
+
+    #[test]
+    fn confirming_new_branch_with_an_empty_name_sends_nothing() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            title: "new branch",
+            input: "   ".into(),
+            replace_on_type: false,
+            target: ClientRenameTarget::GitBranchCreate {
+                workspace_id: "w1".into(),
+            },
+        }));
+        let mut outcome = ClientShellInput::default();
+
+        state.save_rename_overlay(&mut outcome);
+
+        assert!(outcome.actions.is_empty());
+    }
+
+    fn open_stash_picker(state: &mut ClientShellState) -> ClientShellInput {
+        let workspace_id = state.focused_git_workspace_id().unwrap();
+        let mut outcome = ClientShellInput::default();
+        state.activate_git_repo_context_action(
+            workspace_id,
+            ClientContextMenuAction::GitStashApply,
+            &mut outcome,
+        );
+        outcome
+    }
+
+    #[test]
+    fn apply_stash_action_requests_a_stash_picker() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+
+        let outcome = open_stash_picker(&mut state);
+
+        assert!(matches!(
+            &state.overlay,
+            Some(ClientShellOverlay::GitPicker(picker))
+                if picker.purpose == GitPickerPurpose::ApplyStash
+        ));
+        assert_eq!(outcome.actions.len(), 1);
+        let ClientShellAction::Endpoint { request, .. } = &outcome.actions[0] else {
+            panic!("expected an endpoint action");
+        };
+        assert!(matches!(
+            &request.method,
+            crate::api::schema::Method::GitPickerList(params)
+                if params.kind == crate::api::schema::GitPickerKind::Stash
+        ));
+    }
+
+    #[test]
+    fn picker_response_fills_entries_and_confirm_sends_stash_pop() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        open_stash_picker(&mut state);
+
+        let repaint = state.handle_git_endpoint_result(
+            PendingEndpointKind::GitPickerList,
+            Ok(crate::api::schema::ResponseResult::GitPickerList {
+                entries: vec![crate::api::schema::GitPickerEntry {
+                    value: "stash@{0}".into(),
+                    label: "stash@{0} WIP".into(),
+                }],
+            }),
+        );
+        assert!(repaint);
+
+        let mut outcome = ClientShellInput::default();
+        let consumed = state.route_git_picker_overlay_key(&key(KeyCode::Enter), &mut outcome);
+
+        assert!(consumed);
+        assert!(state.overlay.is_none());
+        assert_eq!(outcome.actions.len(), 1);
+        let ClientShellAction::Endpoint { request, .. } = &outcome.actions[0] else {
+            panic!("expected an endpoint action");
+        };
+        assert!(matches!(
+            &request.method,
+            crate::api::schema::Method::GitStashPop(params) if params.stash_ref == "stash@{0}"
+        ));
+    }
+
+    #[test]
+    fn esc_closes_the_picker_overlay() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        open_stash_picker(&mut state);
+        let mut outcome = ClientShellInput::default();
+
+        let consumed = state.route_git_picker_overlay_key(&key(KeyCode::Esc), &mut outcome);
 
         assert!(consumed);
         assert!(state.overlay.is_none());

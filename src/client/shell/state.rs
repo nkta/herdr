@@ -379,6 +379,7 @@ pub(super) enum ClientShellOverlayKind {
     GlobalMenu,
     Settings,
     GitDiff,
+    GitPicker,
 }
 
 #[derive(Debug)]
@@ -402,6 +403,9 @@ pub(super) enum ClientRenameTarget {
     },
     Pane {
         pane_id: String,
+    },
+    GitBranchCreate {
+        workspace_id: String,
     },
 }
 
@@ -601,6 +605,42 @@ pub(super) struct ClientWorktreeRemoveOverlay {
     pub(super) force_confirmation: bool,
 }
 
+/// What confirming the highlighted entry in `ClientGitPickerOverlay` runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GitPickerPurpose {
+    ApplyStash,
+    SwitchBranch,
+    DeleteBranch,
+}
+
+impl GitPickerPurpose {
+    pub(super) fn kind(self) -> crate::api::schema::GitPickerKind {
+        match self {
+            Self::ApplyStash => crate::api::schema::GitPickerKind::Stash,
+            Self::SwitchBranch | Self::DeleteBranch => crate::api::schema::GitPickerKind::Branch,
+        }
+    }
+
+    pub(super) fn title(self) -> &'static str {
+        match self {
+            Self::ApplyStash => "apply stash",
+            Self::SwitchBranch => "switch branch",
+            Self::DeleteBranch => "delete branch",
+        }
+    }
+}
+
+/// Modal list picker used by the Git panel for choosing a stash or a branch.
+#[derive(Debug)]
+pub(super) struct ClientGitPickerOverlay {
+    pub(super) workspace_id: String,
+    pub(super) purpose: GitPickerPurpose,
+    pub(super) entries: Vec<crate::api::schema::GitPickerEntry>,
+    pub(super) selected: usize,
+    pub(super) loading: bool,
+    pub(super) error: Option<String>,
+}
+
 /// Full-screen side-by-side diff view for one file, replacing the terminal area while open.
 #[derive(Debug)]
 pub(super) struct ClientGitDiffOverlay {
@@ -630,6 +670,15 @@ pub(super) enum ClientContextMenuAction {
     Zoom,
     ToggleRightClickPassthrough,
     ClosePane,
+    GitFetch,
+    GitPull,
+    GitPush,
+    GitLog,
+    GitStashPush,
+    GitStashApply,
+    GitNewBranch,
+    GitSwitchBranch,
+    GitDeleteBranch,
 }
 
 #[derive(Debug)]
@@ -651,6 +700,9 @@ pub(super) enum ClientContextMenuTarget {
         source_pane_id: Option<String>,
         has_manual_label: bool,
         right_click_passthrough: bool,
+    },
+    GitRepo {
+        workspace_id: String,
     },
 }
 
@@ -690,6 +742,7 @@ pub(super) enum ClientShellOverlay {
     GlobalMenu(ClientGlobalMenuOverlay),
     Settings(ClientSettingsOverlay),
     GitDiff(ClientGitDiffOverlay),
+    GitPicker(ClientGitPickerOverlay),
 }
 
 impl ClientShellOverlay {
@@ -709,6 +762,7 @@ impl ClientShellOverlay {
             Self::GlobalMenu(_) => ClientShellOverlayKind::GlobalMenu,
             Self::Settings(_) => ClientShellOverlayKind::Settings,
             Self::GitDiff(_) => ClientShellOverlayKind::GitDiff,
+            Self::GitPicker(_) => ClientShellOverlayKind::GitPicker,
         }
     }
 }
@@ -722,6 +776,7 @@ pub(super) enum PendingEndpointKind {
         path: String,
         staged: bool,
     },
+    GitPickerList,
     ProductAnnouncementDismiss {
         version: String,
         id: String,

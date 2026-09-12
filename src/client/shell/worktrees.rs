@@ -561,7 +561,8 @@ impl ClientShellState {
                 | PendingEndpointKind::CopySearch { .. }
                 | PendingEndpointKind::GitFileAction
                 | PendingEndpointKind::GitCommit
-                | PendingEndpointKind::GitDiffGet { .. },
+                | PendingEndpointKind::GitDiffGet { .. }
+                | PendingEndpointKind::GitPickerList,
                 Err(_),
             ) => true,
         }

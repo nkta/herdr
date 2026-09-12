@@ -633,6 +633,9 @@ impl ClientShellState {
         if self.route_git_diff_overlay_key(key, outcome) {
             return;
         }
+        if self.route_git_picker_overlay_key(key, outcome) {
+            return;
+        }
         if matches!(self.overlay, Some(ClientShellOverlay::Navigator(_))) {
             let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
             let search_focused = matches!(
@@ -1049,6 +1052,18 @@ impl ClientShellState {
                     label: Some(trimmed.to_owned()),
                 },
             )),
+            // `switch -c` creates and checks out in one step, and reports in the popup if the
+            // name is already taken or invalid.
+            ClientRenameTarget::GitBranchCreate { workspace_id } => {
+                (!trimmed.is_empty()).then(|| {
+                    crate::api::schema::Method::GitBranchCreate(
+                        crate::api::schema::GitBranchNameParams {
+                            workspace_id,
+                            name: trimmed.to_owned(),
+                        },
+                    )
+                })
+            }
         };
         if let Some(method) = method {
             self.push_endpoint_method(method, outcome);

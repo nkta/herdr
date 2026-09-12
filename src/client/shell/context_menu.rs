@@ -75,6 +75,17 @@ impl ClientContextMenuOverlay {
                 ]);
                 items
             }
+            ClientContextMenuTarget::GitRepo { .. } => vec![
+                item("Fetch", Action::GitFetch),
+                item("Pull", Action::GitPull),
+                item("Push", Action::GitPush),
+                item("View log", Action::GitLog),
+                item("Stash changes", Action::GitStashPush),
+                item("Apply stash...", Action::GitStashApply),
+                item("New branch...", Action::GitNewBranch),
+                item("Switch branch...", Action::GitSwitchBranch),
+                item("Delete branch...", Action::GitDeleteBranch),
+            ],
         }
     }
 }
@@ -213,6 +224,9 @@ impl ClientShellState {
                 action,
                 outcome,
             ),
+            ClientContextMenuTarget::GitRepo { workspace_id } => {
+                self.activate_git_repo_context_action(workspace_id, action, outcome)
+            }
         }
         outcome.repaint = true;
     }

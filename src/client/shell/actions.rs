@@ -893,7 +893,8 @@ impl ClientShellState {
             }
             kind @ (PendingEndpointKind::GitFileAction
             | PendingEndpointKind::GitCommit
-            | PendingEndpointKind::GitDiffGet { .. }) => {
+            | PendingEndpointKind::GitDiffGet { .. }
+            | PendingEndpointKind::GitPickerList) => {
                 return (self.handle_git_endpoint_result(kind, result), Vec::new());
             }
             kind => {
