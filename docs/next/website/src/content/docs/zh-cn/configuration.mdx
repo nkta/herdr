@@ -502,6 +502,25 @@ droid = "off"
 claude = "on"
 ```
 
+## 提交信息智能体
+
+Git 面板的提交框可以使用外部 CLI 智能体，根据已暂存的差异生成提交信息。智能体运行在托管 Herdr 服务器的机器上（而不是客户端），因为 Git 工作树和智能体二进制文件都在那里。
+
+```toml
+[commit_agents]
+active = "claude"
+
+[[commit_agents.agents]]
+id = "claude"
+label = "Claude"
+command = "claude"
+args = ["-p"]
+```
+
+`[[commit_agents.agents]]` 是用户自定义的列表，因此不在[配置参考](/zh-cn/docs/config-reference/)中逐键列出。每个智能体添加一个条目，指定唯一的 `id`、用于显示的 `label`、要运行的 `command` 及其 `args`。配置的 `command` 从标准输入读取提示（指令加上已暂存的差异），并应将提交信息输出到标准输出。`commit_agents.active` 用于选择运行哪个已配置智能体的 id；可在设置界面的 "commit agent" 部分修改，也可直接编辑。即使没有 `[commit_agents]` 部分，Herdr 也默认提供一个可用的 `claude` 智能体。
+
+提交框获得焦点时，按 `ctrl+g` 会使用当前智能体生成信息，并替换已输入的草稿。
+
 ## 高级配置
 
 在[配置参考](/docs/config-reference/)中搜索回滚缓冲区限制、嵌套启动以及其他高级或实验性设置。启用窗格屏幕历史前，请参阅[会话状态与恢复](/docs/session-state/)；该指南说明了保存窗格内容带来的安全取舍。
