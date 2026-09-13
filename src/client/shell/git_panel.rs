@@ -29,30 +29,37 @@ fn file_display_name(path: &str) -> &str {
 }
 
 enum GitPanelLine<'a> {
-    SectionHeader(bool),
+    Spacer,
+    SectionHeader {
+        staged: bool,
+        count: usize,
+    },
     File {
         index: usize,
         entry: &'a crate::protocol::ClientShellGitFileEntry,
     },
 }
 
-/// Flattened visual line list, in the panel's rendering order: a "STAGED CHANGES" header
-/// followed by staged entries, then a "CHANGES" header followed by unstaged/untracked entries.
-/// `index` on `File` lines is a plain row counter shared by rendering and (in a later commit)
-/// input hit-testing, so both agree on which selectable row is which without recomputing it.
+/// Flattened visual line list, in the panel's rendering order: a blank spacer and a "STAGED · n"
+/// header followed by staged entries, then the same for "CHANGES · n" and unstaged/untracked
+/// entries. `index` on `File` lines counts only files, in the same staged-then-unstaged order the
+/// key handlers use, so rendering and hit-testing agree on which selectable row is which.
 fn panel_lines(working_tree: &crate::protocol::ClientShellGitWorkingTree) -> Vec<GitPanelLine<'_>> {
     let mut lines = Vec::new();
     let mut index = 0;
-    if !working_tree.staged.is_empty() {
-        lines.push(GitPanelLine::SectionHeader(true));
-        for entry in &working_tree.staged {
-            lines.push(GitPanelLine::File { index, entry });
-            index += 1;
+    for (staged, entries) in [
+        (true, &working_tree.staged),
+        (false, &working_tree.unstaged),
+    ] {
+        if entries.is_empty() {
+            continue;
         }
-    }
-    if !working_tree.unstaged.is_empty() {
-        lines.push(GitPanelLine::SectionHeader(false));
-        for entry in &working_tree.unstaged {
+        lines.push(GitPanelLine::Spacer);
+        lines.push(GitPanelLine::SectionHeader {
+            staged,
+            count: entries.len(),
+        });
+        for entry in entries {
             lines.push(GitPanelLine::File { index, entry });
             index += 1;
         }
@@ -97,21 +104,42 @@ pub(super) fn render_git_panel(
     }
 
     let mut y = area.y;
-    let branch = workspace.branch.as_deref().unwrap_or("(detached)");
-    let ahead_behind = workspace
-        .git_ahead_behind
-        .map(|(ahead, behind)| format!(" ↑{ahead} ↓{behind}"))
-        .unwrap_or_default();
+    let branch = format!(" {}", workspace.branch.as_deref().unwrap_or("(detached)"));
     put_text(
         buffer,
         area.x,
         y,
         area.width,
-        &format!(" {branch}{ahead_behind}"),
+        &branch,
         Style::default()
             .fg(palette.mauve)
             .add_modifier(Modifier::BOLD),
     );
+    if let Some((ahead, behind)) = workspace.git_ahead_behind {
+        // Commits to push (↑) and to pull (↓), each in its own color; a zero count is dimmed so
+        // only the side that actually needs attention stands out.
+        let mut x = area.x.saturating_add(display_width(&branch));
+        for (prefix, count, color) in [
+            ("  ↑", ahead, palette.green),
+            (" ↓", behind, palette.yellow),
+        ] {
+            let segment = format!("{prefix}{count}");
+            let style = if count == 0 {
+                Style::default().fg(palette.overlay0)
+            } else {
+                Style::default().fg(color).add_modifier(Modifier::BOLD)
+            };
+            put_text(
+                buffer,
+                x,
+                y,
+                area.right().saturating_sub(x),
+                &segment,
+                style,
+            );
+            x = x.saturating_add(display_width(&segment));
+        }
+    }
     y = y.saturating_add(1);
     if y >= area.bottom() {
         return (Vec::new(), Rect::default());
@@ -153,7 +181,22 @@ pub(super) fn render_git_panel(
         .bottom()
         .saturating_sub(desired_commit_box_height)
         .max(y);
-    let list_bottom = commit_box_top;
+    // A rule just above the commit box separates the file list from the message field, when
+    // there's a row to spare for it.
+    let list_bottom = if commit_box_top > y {
+        let separator_y = commit_box_top - 1;
+        put_text(
+            buffer,
+            area.x,
+            separator_y,
+            area.width,
+            &"─".repeat(usize::from(area.width)),
+            Style::default().fg(palette.surface_dim),
+        );
+        separator_y
+    } else {
+        commit_box_top
+    };
     render_commit_box(
         buffer,
         area,
@@ -208,33 +251,51 @@ pub(super) fn render_git_panel(
             break;
         }
         match line {
-            GitPanelLine::SectionHeader(staged) => {
+            GitPanelLine::Spacer => {}
+            GitPanelLine::SectionHeader { staged, count } => {
+                let label = if *staged { "STAGED" } else { "CHANGES" };
                 put_text(
                     buffer,
                     area.x,
                     y,
                     area.width,
-                    if *staged {
-                        " STAGED CHANGES"
-                    } else {
-                        " CHANGES"
-                    },
-                    Style::default().fg(palette.overlay0),
+                    &format!(" {label} · {count}"),
+                    Style::default()
+                        .fg(palette.subtext0)
+                        .add_modifier(Modifier::BOLD),
                 );
             }
             GitPanelLine::File { index, entry } => {
                 let rect = Rect::new(area.x, y, area.width, 1);
-                if *index == git_panel.selected {
+                let selected = *index == git_panel.selected;
+                if selected {
                     buffer.set_style(rect, Style::default().bg(palette.selection_bg));
+                    put_text(
+                        buffer,
+                        rect.x,
+                        rect.y,
+                        1,
+                        "▸",
+                        Style::default()
+                            .fg(palette.accent)
+                            .add_modifier(Modifier::BOLD),
+                    );
                 }
                 let (glyph, glyph_color) = status_glyph(entry.status, palette);
+                let name_style = if selected {
+                    Style::default()
+                        .fg(glyph_color)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(glyph_color)
+                };
                 put_text(
                     buffer,
-                    rect.x,
+                    rect.x.saturating_add(2),
                     rect.y,
-                    rect.width.saturating_sub(2),
-                    &format!(" {}", file_display_name(&entry.path)),
-                    Style::default().fg(palette.text),
+                    rect.width.saturating_sub(4),
+                    file_display_name(&entry.path),
+                    name_style,
                 );
                 put_text(
                     buffer,
@@ -536,9 +597,9 @@ mod tests {
         assert!(text.contains("main"));
         assert!(text.contains("↑2"));
         assert!(text.contains("↓1"));
-        assert!(text.contains("STAGED CHANGES"));
+        assert!(text.contains("STAGED · 1"));
         assert!(text.contains("staged.rs"));
-        assert!(text.contains("CHANGES"));
+        assert!(text.contains("CHANGES · 1"));
         assert!(text.contains("unstaged.rs"));
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].1, 0);
@@ -549,7 +610,7 @@ mod tests {
     #[test]
     fn commit_box_hit_rect_sits_below_the_file_rows() {
         let palette = test_palette();
-        let area = Rect::new(0, 0, 30, 10);
+        let area = Rect::new(0, 0, 30, 16);
         let mut buffer = Buffer::empty(area);
         let git_panel = ClientGitPanelState::default();
         let working_tree = ClientShellGitWorkingTree {
@@ -573,7 +634,7 @@ mod tests {
     #[test]
     fn scroll_skips_leading_lines() {
         let palette = test_palette();
-        let area = Rect::new(0, 0, 30, 10);
+        let area = Rect::new(0, 0, 30, 16);
         let working_tree = ClientShellGitWorkingTree {
             staged: vec![ClientShellGitFileEntry {
                 path: "staged.rs".into(),
@@ -587,18 +648,19 @@ mod tests {
         let mut buffer_no_scroll = Buffer::empty(area);
         let no_scroll = ClientGitPanelState::default();
         render_git_panel(&mut buffer_no_scroll, area, Some(&ws), &no_scroll, &palette);
-        assert!(buffer_text(&buffer_no_scroll).contains("STAGED CHANGES"));
+        assert!(buffer_text(&buffer_no_scroll).contains("STAGED · 1"));
 
+        // Lines are [spacer, header, file]; scrolling past the first two leaves only the file.
         let mut buffer_scrolled = Buffer::empty(area);
         let scrolled = ClientGitPanelState {
             selected: 0,
-            scroll: 1,
+            scroll: 2,
             ..Default::default()
         };
         let (hits, _commit_box) =
             render_git_panel(&mut buffer_scrolled, area, Some(&ws), &scrolled, &palette);
         let text = buffer_text(&buffer_scrolled);
-        assert!(!text.contains("STAGED CHANGES"));
+        assert!(!text.contains("STAGED"));
         assert!(text.contains("staged.rs"));
         assert_eq!(hits.len(), 1);
     }
@@ -773,7 +835,7 @@ mod tests {
     #[test]
     fn file_row_shows_only_the_base_name_for_nested_paths() {
         let palette = test_palette();
-        let area = Rect::new(0, 0, 30, 10);
+        let area = Rect::new(0, 0, 30, 16);
         let mut buffer = Buffer::empty(area);
         let working_tree = ClientShellGitWorkingTree {
             staged: vec![ClientShellGitFileEntry {
@@ -796,7 +858,7 @@ mod tests {
     #[test]
     fn file_row_shows_the_name_first_and_the_status_glyph_at_the_right_edge() {
         let palette = test_palette();
-        let area = Rect::new(0, 0, 30, 10);
+        let area = Rect::new(0, 0, 30, 16);
         let mut buffer = Buffer::empty(area);
         let working_tree = ClientShellGitWorkingTree {
             staged: vec![ClientShellGitFileEntry {
@@ -813,14 +875,14 @@ mod tests {
             render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         let file_row_y = hits[0].0.y;
-        assert_eq!(buffer[(area.x + 1, file_row_y)].symbol(), "s");
+        assert_eq!(buffer[(area.x + 2, file_row_y)].symbol(), "s");
         assert_eq!(buffer[(area.right() - 1, file_row_y)].symbol(), "A");
     }
 
     #[test]
     fn selected_row_gets_highlighted_background() {
         let palette = test_palette();
-        let area = Rect::new(0, 0, 30, 10);
+        let area = Rect::new(0, 0, 30, 16);
         let mut buffer = Buffer::empty(area);
         let working_tree = ClientShellGitWorkingTree {
             staged: vec![
@@ -856,5 +918,108 @@ mod tests {
             buffer[(other_rect.x, other_rect.y)].bg,
             palette.selection_bg
         );
+    }
+
+    fn two_section_working_tree() -> ClientShellGitWorkingTree {
+        ClientShellGitWorkingTree {
+            staged: vec![ClientShellGitFileEntry {
+                path: "a.rs".into(),
+                original_path: None,
+                status: ClientShellGitFileStatus::Added,
+            }],
+            unstaged: vec![ClientShellGitFileEntry {
+                path: "b.rs".into(),
+                original_path: None,
+                status: ClientShellGitFileStatus::Modified,
+            }],
+        }
+    }
+
+    #[test]
+    fn sections_are_separated_by_a_blank_line() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 16);
+        let mut buffer = Buffer::empty(area);
+        let ws = workspace(true, Some(two_section_working_tree()));
+
+        let (hits, _commit_box) = render_git_panel(
+            &mut buffer,
+            area,
+            Some(&ws),
+            &ClientGitPanelState::default(),
+            &palette,
+        );
+
+        // staged file, blank spacer, "CHANGES · 1" header, then the unstaged file.
+        assert_eq!(hits[1].0.y - hits[0].0.y, 3);
+        let spacer_y = hits[0].0.y + 1;
+        assert!((area.x..area.right()).all(|x| buffer[(x, spacer_y)].symbol() == " "));
+    }
+
+    #[test]
+    fn selected_file_row_gets_a_marker_and_names_take_the_status_color() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 16);
+        let mut buffer = Buffer::empty(area);
+        let ws = workspace(true, Some(two_section_working_tree()));
+        let git_panel = ClientGitPanelState {
+            selected: 1,
+            ..Default::default()
+        };
+
+        let (hits, _commit_box) =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+
+        let added_y = hits[0].0.y;
+        let modified_y = hits[1].0.y;
+        assert_eq!(buffer[(area.x, modified_y)].symbol(), "▸");
+        assert_eq!(buffer[(area.x, added_y)].symbol(), " ");
+        assert_eq!(buffer[(area.x + 2, added_y)].fg, palette.green);
+        assert_eq!(buffer[(area.x + 2, modified_y)].fg, palette.yellow);
+    }
+
+    #[test]
+    fn push_and_pull_counts_are_colored_and_a_zero_count_is_dimmed() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 16);
+        let mut buffer = Buffer::empty(area);
+        let mut ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        ws.git_ahead_behind = Some((2, 0));
+
+        render_git_panel(
+            &mut buffer,
+            area,
+            Some(&ws),
+            &ClientGitPanelState::default(),
+            &palette,
+        );
+
+        let find = |symbol: &str| {
+            (area.x..area.right())
+                .find(|&x| buffer[(x, area.y)].symbol() == symbol)
+                .expect("arrow rendered")
+        };
+        assert_eq!(buffer[(find("↑"), area.y)].fg, palette.green);
+        assert_eq!(buffer[(find("↓"), area.y)].fg, palette.overlay0);
+    }
+
+    #[test]
+    fn a_separator_line_sits_right_above_the_commit_box() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 16);
+        let mut buffer = Buffer::empty(area);
+        let ws = workspace(true, Some(two_section_working_tree()));
+
+        let (hits, commit_box) = render_git_panel(
+            &mut buffer,
+            area,
+            Some(&ws),
+            &ClientGitPanelState::default(),
+            &palette,
+        );
+
+        let separator_y = commit_box.y - 1;
+        assert_eq!(buffer[(area.x, separator_y)].symbol(), "─");
+        assert!(hits.iter().all(|(rect, _)| rect.y < separator_y));
     }
 }
