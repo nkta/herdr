@@ -107,7 +107,6 @@ impl ClientShellState {
             workspace_drop_indicator_row: None,
             sidebar_view: self.sidebar_view,
             git_panel: &self.git_panel,
-            commit_agent_generate_supported,
         };
         if let Some(snapshot) = local_snapshot {
             render::render_sidebar(
@@ -163,6 +162,7 @@ impl ClientShellState {
             None,
             self.endpoint_error.as_deref(),
             false,
+            commit_agent_generate_supported,
             &self.config.keybinds,
             &self.config.palette,
         );
@@ -245,7 +245,6 @@ impl ClientShellState {
                 workspace_drop_indicator_row,
                 sidebar_view: self.sidebar_view,
                 git_panel: &self.git_panel,
-                commit_agent_generate_supported,
             },
         );
         self.hits.panes = surface
@@ -341,6 +340,7 @@ impl ClientShellState {
                 self.copy_mode.as_ref(),
                 self.endpoint_error.as_deref(),
                 snapshot.update_available.is_some(),
+                commit_agent_generate_supported,
                 &self.config.keybinds,
                 &self.config.palette,
             )

@@ -220,7 +220,6 @@ pub(crate) fn render_sidebar(
             body,
             focused_workspace,
             state.git_panel,
-            state.commit_agent_generate_supported,
             palette,
         );
     } else {

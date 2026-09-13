@@ -37,6 +37,7 @@ pub(super) fn render_mode_bar(
     copy_mode: Option<&ClientCopyModeState>,
     endpoint_error: Option<&str>,
     update_available: bool,
+    commit_agent_generate_supported: bool,
     keybinds: &LiveKeybindConfig,
     palette: &Palette,
 ) -> Option<Rect> {
@@ -190,9 +191,13 @@ pub(super) fn render_mode_bar(
                     (" diff  ".to_owned(), base),
                     ("m".to_owned(), key),
                     (" menu  ".to_owned(), base),
-                    ("esc".to_owned(), key),
-                    (" back".to_owned(), base),
+                    ("ctrl+enter".to_owned(), key),
+                    (" commit  ".to_owned(), base),
                 ]);
+                if commit_agent_generate_supported {
+                    segments.extend([("ctrl+g".to_owned(), key), (" generate  ".to_owned(), base)]);
+                }
+                segments.extend([("esc".to_owned(), key), (" back".to_owned(), base)]);
             }
             ClientShellMode::Terminal => unreachable!(),
         }
@@ -250,7 +255,6 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) workspace_drop_indicator_row: Option<u16>,
     pub(super) sidebar_view: SidebarSpacesView,
     pub(super) git_panel: &'a ClientGitPanelState,
-    pub(super) commit_agent_generate_supported: bool,
 }
 
 pub(super) fn render_shell(
@@ -604,4 +608,79 @@ fn prefix_hint_panel_shell(buffer: &mut Buffer, area: Rect, palette: &Palette) -
         area.width - 2,
         area.height - 2,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    fn test_keybinds() -> LiveKeybindConfig {
+        Config::default()
+            .live_keybinds_with_diagnostics()
+            .unwrap()
+            .0
+    }
+
+    fn test_palette() -> Palette {
+        crate::app::client_palette_from_config(&Config::default())
+    }
+
+    fn bar_text(buffer: &Buffer, bar: Rect) -> String {
+        (bar.x..bar.right())
+            .map(|x| buffer[(x, bar.y)].symbol().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn sidebar_git_mode_bar_shows_commit_and_generate_shortcuts() {
+        let palette = test_palette();
+        let keybinds = test_keybinds();
+        let area = Rect::new(0, 0, 200, 10);
+        let mut buffer = Buffer::empty(area);
+
+        let bar = render_mode_bar(
+            &mut buffer,
+            area,
+            ClientShellMode::SidebarGit,
+            None,
+            None,
+            false,
+            true,
+            &keybinds,
+            &palette,
+        )
+        .unwrap();
+
+        let text = bar_text(&buffer, bar);
+        assert!(text.contains("ctrl+enter"));
+        assert!(text.contains("commit"));
+        assert!(text.contains("ctrl+g"));
+        assert!(text.contains("generate"));
+    }
+
+    #[test]
+    fn sidebar_git_mode_bar_hides_generate_when_unsupported() {
+        let palette = test_palette();
+        let keybinds = test_keybinds();
+        let area = Rect::new(0, 0, 200, 10);
+        let mut buffer = Buffer::empty(area);
+
+        let bar = render_mode_bar(
+            &mut buffer,
+            area,
+            ClientShellMode::SidebarGit,
+            None,
+            None,
+            false,
+            false,
+            &keybinds,
+            &palette,
+        )
+        .unwrap();
+
+        let text = bar_text(&buffer, bar);
+        assert!(text.contains("ctrl+enter"));
+        assert!(!text.contains("ctrl+g"));
+    }
 }
