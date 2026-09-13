@@ -602,7 +602,12 @@ impl ClientShellState {
                 None
             }
             ClientShellMode::SidebarGit => {
-                self.route_git_panel_key(key, outcome);
+                if crate::config::terminal_key_matches_combo(key, self.config.keybinds.prefix) {
+                    self.mode = ClientShellMode::Prefix;
+                    outcome.repaint = true;
+                } else {
+                    self.route_git_panel_key(key, outcome);
+                }
                 None
             }
             ClientShellMode::Resize => {

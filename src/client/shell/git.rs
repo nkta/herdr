@@ -1190,6 +1190,39 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_b_prefix_is_recognized_while_the_git_panel_is_focused() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.mode = ClientShellMode::SidebarGit;
+
+        state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+            KeyCode::Char('b'),
+            KeyModifiers::CONTROL,
+        ))]);
+
+        assert_eq!(state.mode, ClientShellMode::Prefix);
+    }
+
+    #[test]
+    fn ctrl_b_t_from_within_the_git_panel_keeps_git_focused() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.mode = ClientShellMode::SidebarGit;
+
+        state.handle_raw_events(vec![
+            RawInputEvent::Key(crate::input::TerminalKey::new(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL,
+            )),
+            RawInputEvent::Key(crate::input::TerminalKey::new(
+                KeyCode::Char('t'),
+                KeyModifiers::empty(),
+            )),
+        ]);
+
+        assert_eq!(state.sidebar_view, SidebarSpacesView::Git);
+        assert_eq!(state.mode, ClientShellMode::SidebarGit);
+    }
+
+    #[test]
     fn toggle_sidebar_git_view_from_spaces_shows_and_focuses_git() {
         let mut state = test_state_with_working_tree(one_unstaged_file());
         state.sidebar_view = SidebarSpacesView::Spaces;

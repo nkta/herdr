@@ -22,6 +22,12 @@ fn status_glyph(
     }
 }
 
+/// The file row shows only the name (last path component), not the full repo-relative path —
+/// `entry.path` itself (with directories) is still what staging, discarding, and diffing act on.
+fn file_display_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
 enum GitPanelLine<'a> {
     SectionHeader(bool),
     File {
@@ -227,7 +233,7 @@ pub(super) fn render_git_panel(
                     rect.x,
                     rect.y,
                     rect.width.saturating_sub(2),
-                    &format!(" {}", entry.path),
+                    &format!(" {}", file_display_name(&entry.path)),
                     Style::default().fg(palette.text),
                 );
                 put_text(
@@ -755,6 +761,36 @@ mod tests {
     #[test]
     fn wrap_commit_message_of_empty_text_returns_one_empty_line() {
         assert_eq!(wrap_commit_message("", 10), vec![String::new()]);
+    }
+
+    #[test]
+    fn file_display_name_strips_directories() {
+        assert_eq!(file_display_name("src/client/shell/git.rs"), "git.rs");
+        assert_eq!(file_display_name("git.rs"), "git.rs");
+        assert_eq!(file_display_name(""), "");
+    }
+
+    #[test]
+    fn file_row_shows_only_the_base_name_for_nested_paths() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 10);
+        let mut buffer = Buffer::empty(area);
+        let working_tree = ClientShellGitWorkingTree {
+            staged: vec![ClientShellGitFileEntry {
+                path: "src/client/shell/git.rs".into(),
+                original_path: None,
+                status: ClientShellGitFileStatus::Modified,
+            }],
+            unstaged: Vec::new(),
+        };
+        let ws = workspace(true, Some(working_tree));
+        let git_panel = ClientGitPanelState::default();
+
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+
+        let text = buffer_text(&buffer);
+        assert!(text.contains("git.rs"));
+        assert!(!text.contains("src/client/shell/git.rs"));
     }
 
     #[test]
