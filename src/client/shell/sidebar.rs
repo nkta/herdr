@@ -224,6 +224,7 @@ pub(crate) fn render_sidebar(
         );
         hits.git_panel_rows = git_hits.rows;
         hits.git_commit_box = git_hits.commit_box;
+        hits.git_commit_button = git_hits.commit_button;
         hits.git_file_list = git_hits.file_list;
         hits.git_max_scroll = git_hits.max_scroll;
     } else {

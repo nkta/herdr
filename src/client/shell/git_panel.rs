@@ -6,6 +6,10 @@ use ratatui::style::Color;
 /// not a single-line preview.
 const COMMIT_BOX_MESSAGE_ROWS: u16 = 5;
 
+/// Clickable label at the right of the commit box header. Ctrl+Enter alone is not enough: many
+/// terminals (GNOME Terminal / VTE among them) send it as a plain Enter.
+const COMMIT_BUTTON_LABEL: &str = " commit ";
+
 fn status_glyph(
     status: crate::protocol::ClientShellGitFileStatus,
     palette: &Palette,
@@ -108,6 +112,8 @@ pub(super) struct GitPanelHits {
     pub(super) rows: Vec<(Rect, usize)>,
     /// The commit box (empty when it wasn't drawn, e.g. no room or no repo).
     pub(super) commit_box: Rect,
+    /// The commit button in the commit box header (empty when it wasn't drawn).
+    pub(super) commit_button: Rect,
     /// The scrollable file list viewport (empty when there is no list to scroll).
     pub(super) file_list: Rect,
     /// The largest scroll offset that still fills the file list viewport.
@@ -242,7 +248,7 @@ pub(super) fn render_git_panel(
     } else {
         commit_box_top
     };
-    render_commit_box(
+    let commit_button = render_commit_box(
         buffer,
         area,
         commit_box_top,
@@ -273,6 +279,7 @@ pub(super) fn render_git_panel(
         }
         return GitPanelHits {
             commit_box: commit_box_rect,
+            commit_button,
             ..GitPanelHits::default()
         };
     };
@@ -291,6 +298,7 @@ pub(super) fn render_git_panel(
         }
         return GitPanelHits {
             commit_box: commit_box_rect,
+            commit_button,
             ..GitPanelHits::default()
         };
     }
@@ -365,6 +373,7 @@ pub(super) fn render_git_panel(
     GitPanelHits {
         rows: hits,
         commit_box: commit_box_rect,
+        commit_button,
         file_list,
         max_scroll,
     }
@@ -375,6 +384,8 @@ pub(super) fn render_git_panel(
 /// modeled on VS Code's Source Control input rather than a single-line preview. Editing only
 /// ever appends at (or backspaces from) the end of the message, so the field is bottom-anchored:
 /// it always shows the tail of the wrapped text, keeping the insertion point in view.
+///
+/// Returns the hit rect of the header's commit button (empty when there was no room for it).
 fn render_commit_box(
     buffer: &mut Buffer,
     area: Rect,
@@ -382,9 +393,9 @@ fn render_commit_box(
     git_panel: &ClientGitPanelState,
     wrapped: &[String],
     palette: &Palette,
-) {
+) -> Rect {
     if top >= area.bottom() {
-        return;
+        return Rect::default();
     }
     let focused = git_panel.focus == GitSidebarFocus::CommitBox;
     let header = if git_panel.commit_in_flight {
@@ -394,11 +405,28 @@ fn render_commit_box(
     } else {
         " COMMIT MESSAGE"
     };
+    // The commit button sits at the right of the header row and wins the space over the header
+    // text on a narrow sidebar, since it is the only mouse path to committing.
+    let button_width = display_width(COMMIT_BUTTON_LABEL);
+    let button = if area.width > button_width {
+        Rect::new(
+            area.right().saturating_sub(button_width + 1),
+            top,
+            button_width,
+            1,
+        )
+    } else {
+        Rect::default()
+    };
     put_text(
         buffer,
         area.x,
         top,
-        area.width,
+        if button.is_empty() {
+            area.width
+        } else {
+            button.x.saturating_sub(area.x)
+        },
         header,
         Style::default().fg(if focused {
             palette.text
@@ -406,10 +434,37 @@ fn render_commit_box(
             palette.overlay0
         }),
     );
+    if !button.is_empty() {
+        let ready = !git_panel.commit_message.trim().is_empty()
+            && !git_panel.commit_in_flight
+            && !git_panel.generating_commit_message;
+        let style = if ready {
+            // Same contrast rule as the overlays' primary buttons: a transparent panel falls back
+            // to the dim surface so the label stays readable on the accent.
+            let label = match palette.panel_bg {
+                Color::Reset => palette.surface_dim,
+                color => color,
+            };
+            Style::default()
+                .fg(label)
+                .bg(palette.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(palette.overlay0).bg(palette.surface0)
+        };
+        put_text(
+            buffer,
+            button.x,
+            button.y,
+            button.width,
+            COMMIT_BUTTON_LABEL,
+            style,
+        );
+    }
 
     let message_top = top.saturating_add(1);
     if message_top >= area.bottom() {
-        return;
+        return button;
     }
     let message_height = area.bottom() - message_top;
     let box_bg = if focused {
@@ -474,6 +529,7 @@ fn render_commit_box(
             }
         }
     }
+    button
 }
 
 /// The wrapped-row index and display column of `cursor` (a byte offset into the un-wrapped
@@ -663,6 +719,51 @@ mod tests {
         assert_eq!(hits[0].1, 0);
         assert_eq!(hits[1].1, 1);
         assert!(hits[0].0.y < hits[1].0.y);
+    }
+
+    #[test]
+    fn commit_button_sits_at_the_right_of_the_commit_box_header() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 16);
+        let ws = workspace(true, Some(unstaged_files(1)));
+        let row_text = |buffer: &Buffer, rect: Rect| -> String {
+            (rect.x..rect.right())
+                .map(|x| buffer[(x, rect.y)].symbol().to_string())
+                .collect()
+        };
+
+        let mut empty_buffer = Buffer::empty(area);
+        let GitPanelHits {
+            commit_box,
+            commit_button,
+            ..
+        } = render_git_panel(
+            &mut empty_buffer,
+            area,
+            Some(&ws),
+            &ClientGitPanelState::default(),
+            &palette,
+        );
+        assert_eq!(commit_button.y, commit_box.y);
+        assert_eq!(commit_button.right(), area.right() - 1);
+        assert_eq!(row_text(&empty_buffer, commit_button), COMMIT_BUTTON_LABEL);
+        assert!(row_text(&empty_buffer, commit_box).contains("COMMIT MESSAGE"));
+        // An empty draft cannot be committed, so the button is not highlighted.
+        assert_ne!(
+            empty_buffer[(commit_button.x, commit_button.y)].bg,
+            palette.accent
+        );
+
+        let mut ready_buffer = Buffer::empty(area);
+        let ready = ClientGitPanelState {
+            commit_message: "fix bug".into(),
+            ..Default::default()
+        };
+        render_git_panel(&mut ready_buffer, area, Some(&ws), &ready, &palette);
+        assert_eq!(
+            ready_buffer[(commit_button.x, commit_button.y)].bg,
+            palette.accent
+        );
     }
 
     #[test]

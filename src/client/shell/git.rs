@@ -266,7 +266,10 @@ impl ClientShellState {
         );
     }
 
-    fn submit_git_commit(&mut self, outcome: &mut ClientShellInput) {
+    pub(super) fn submit_git_commit(&mut self, outcome: &mut ClientShellInput) {
+        if self.git_panel.commit_in_flight {
+            return;
+        }
         let message = self.git_panel.commit_message.trim().to_string();
         if message.is_empty() {
             return;
@@ -460,7 +463,10 @@ impl ClientShellState {
                     outcome.repaint = true;
                     true
                 }
-                KeyCode::Enter if modifiers.contains(KeyModifiers::CONTROL) => {
+                // Alt+Enter is the fallback for terminals that send Ctrl+Enter as a plain Enter.
+                KeyCode::Enter
+                    if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
                     self.submit_git_commit(outcome);
                     true
                 }
@@ -1160,6 +1166,70 @@ mod tests {
             &request.method,
             crate::api::schema::Method::GitCommit(params) if params.message == "fix bug"
         ));
+    }
+
+    fn assert_single_commit_request(outcome: &ClientShellInput, message: &str) {
+        assert_eq!(outcome.actions.len(), 1);
+        let ClientShellAction::Endpoint { request, .. } = &outcome.actions[0] else {
+            panic!("expected an endpoint action");
+        };
+        assert!(matches!(
+            &request.method,
+            crate::api::schema::Method::GitCommit(params) if params.message == message
+        ));
+    }
+
+    #[test]
+    fn alt_enter_submits_the_commit_for_terminals_that_send_ctrl_enter_as_enter() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "fix bug".into();
+        let mut outcome = ClientShellInput::default();
+
+        let alt_enter = crate::input::TerminalKey::new(KeyCode::Enter, KeyModifiers::ALT);
+        let consumed = state.route_git_panel_key(&alt_enter, &mut outcome);
+
+        assert!(consumed);
+        assert!(state.git_panel.commit_in_flight);
+        assert_eq!(state.git_panel.commit_message, "fix bug");
+        assert_single_commit_request(&outcome, "fix bug");
+    }
+
+    #[test]
+    fn a_commit_already_in_flight_is_not_submitted_twice() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.focus = GitSidebarFocus::CommitBox;
+        state.git_panel.commit_message = "fix bug".into();
+        let mut outcome = ClientShellInput::default();
+
+        state.route_git_panel_key(&ctrl_key(KeyCode::Enter), &mut outcome);
+        state.route_git_panel_key(&ctrl_key(KeyCode::Enter), &mut outcome);
+
+        assert_single_commit_request(&outcome, "fix bug");
+    }
+
+    #[test]
+    fn clicking_the_commit_button_submits_the_commit() {
+        let mut state = test_state_with_working_tree(one_unstaged_file());
+        state.git_panel.commit_message = "fix bug".into();
+        state.compose(106, 30).expect("git panel frame");
+        let button = state.hits.git_commit_button;
+        assert!(!button.is_empty());
+
+        let outcome =
+            state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: button.x,
+                row: button.y,
+                modifiers: KeyModifiers::empty(),
+            })]);
+
+        assert!(state.git_panel.commit_in_flight);
+        assert!(outcome.actions.iter().any(|action| matches!(
+            action,
+            ClientShellAction::Endpoint { request, .. }
+                if matches!(&request.method, crate::api::schema::Method::GitCommit(params) if params.message == "fix bug")
+        )));
     }
 
     #[test]

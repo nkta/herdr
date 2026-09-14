@@ -165,6 +165,7 @@ pub(super) struct ShellHitMap {
     pub(super) git_tab: Rect,
     pub(super) git_panel_rows: Vec<(Rect, usize)>,
     pub(super) git_commit_box: Rect,
+    pub(super) git_commit_button: Rect,
     pub(super) git_file_list: Rect,
     pub(super) git_max_scroll: usize,
     pub(super) new_workspace: Rect,

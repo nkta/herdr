@@ -192,7 +192,7 @@ pub(super) fn render_mode_bar(
                     (" diff  ".to_owned(), base),
                     ("m".to_owned(), key),
                     (" menu  ".to_owned(), base),
-                    ("ctrl+enter".to_owned(), key),
+                    ("alt+enter".to_owned(), key),
                     (" commit  ".to_owned(), base),
                 ]);
                 if commit_agent_generate_supported {
@@ -654,7 +654,7 @@ mod tests {
         .unwrap();
 
         let text = bar_text(&buffer, bar);
-        assert!(text.contains("ctrl+enter"));
+        assert!(text.contains("alt+enter"));
         assert!(text.contains("commit"));
         assert!(text.contains("ctrl+g"));
         assert!(text.contains("generate"));
@@ -681,7 +681,7 @@ mod tests {
         .unwrap();
 
         let text = bar_text(&buffer, bar);
-        assert!(text.contains("ctrl+enter"));
+        assert!(text.contains("alt+enter"));
         assert!(!text.contains("ctrl+g"));
     }
 }
