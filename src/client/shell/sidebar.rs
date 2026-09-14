@@ -220,6 +220,9 @@ pub(crate) fn render_sidebar(
             body,
             focused_workspace,
             state.git_panel,
+            config.spaces.rows.iter().flatten().any(|token| {
+                matches!(token.parts().0, crate::config::SpaceSidebarToken::GitStatus)
+            }),
             palette,
         );
         hits.git_panel_rows = git_hits.rows;

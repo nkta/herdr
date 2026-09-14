@@ -10,6 +10,12 @@ const COMMIT_BOX_MESSAGE_ROWS: u16 = 5;
 /// terminals (GNOME Terminal / VTE among them) send it as a plain Enter.
 const COMMIT_BUTTON_LABEL: &str = " commit ";
 
+/// Shown after the branch name in place of the ↑/↓ counts when the branch has no upstream: the
+/// Nerd Font cloud-upload glyph (`nf-fa-cloud_upload`, U+F0EE), VS Code's "publish branch" cue.
+/// The plain-Unicode `☁↑` pair was tried first, but terminals draw the cloud as a wide emoji
+/// that overlaps the arrow, so this needs a Nerd Font like the rest of the icon-heavy tooling.
+const UNPUBLISHED_BRANCH_ICON: &str = "  \u{f0ee}";
+
 fn status_glyph(
     status: crate::protocol::ClientShellGitFileStatus,
     palette: &Palette,
@@ -121,11 +127,16 @@ pub(super) struct GitPanelHits {
 }
 
 /// Renders the sidebar's Git panel for the focused workspace and returns its hit-test rects.
+///
+/// `ahead_behind_tracked` says whether the server computes ahead/behind counts at all (it only
+/// does while the spaces sidebar shows a `git_status` token). Only then does a branch without
+/// counts mean "no upstream", worth the unpublished-branch icon.
 pub(super) fn render_git_panel(
     buffer: &mut Buffer,
     area: Rect,
     workspace: Option<&crate::protocol::ClientShellWorkspace>,
     git_panel: &ClientGitPanelState,
+    ahead_behind_tracked: bool,
     palette: &Palette,
 ) -> GitPanelHits {
     if area.is_empty() {
@@ -190,6 +201,21 @@ pub(super) fn render_git_panel(
             );
             x = x.saturating_add(display_width(&segment));
         }
+    } else if ahead_behind_tracked
+        && workspace.branch.is_some()
+        && workspace.git_working_tree.is_some()
+    {
+        // No counts for a checked-out branch: it has no upstream yet (or its upstream ref is
+        // gone), so there is nothing to compare against until it is published.
+        let x = area.x.saturating_add(display_width(&branch));
+        put_text(
+            buffer,
+            x,
+            y,
+            area.right().saturating_sub(x),
+            UNPUBLISHED_BRANCH_ICON,
+            Style::default().fg(palette.blue),
+        );
     }
     y = y.saturating_add(1);
     if y >= area.bottom() {
@@ -631,7 +657,7 @@ mod tests {
         let git_panel = ClientGitPanelState::default();
 
         let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer, area, None, &git_panel, &palette);
+            render_git_panel(&mut buffer, area, None, &git_panel, true, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("no focused workspace"));
@@ -646,7 +672,7 @@ mod tests {
         let ws = workspace(false, None);
 
         let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("not a git repository"));
@@ -661,7 +687,7 @@ mod tests {
         let ws = workspace(true, None);
 
         let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         assert!(hits.is_empty());
         let text = buffer_text(&buffer);
@@ -678,7 +704,7 @@ mod tests {
         let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
 
         let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("no changes"));
@@ -705,7 +731,7 @@ mod tests {
         let ws = workspace(true, Some(working_tree));
 
         let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let text = buffer_text(&buffer);
         assert!(text.contains("main"));
@@ -742,6 +768,7 @@ mod tests {
             area,
             Some(&ws),
             &ClientGitPanelState::default(),
+            true,
             &palette,
         );
         assert_eq!(commit_button.y, commit_box.y);
@@ -759,7 +786,7 @@ mod tests {
             commit_message: "fix bug".into(),
             ..Default::default()
         };
-        render_git_panel(&mut ready_buffer, area, Some(&ws), &ready, &palette);
+        render_git_panel(&mut ready_buffer, area, Some(&ws), &ready, true, &palette);
         assert_eq!(
             ready_buffer[(commit_button.x, commit_button.y)].bg,
             palette.accent
@@ -786,7 +813,7 @@ mod tests {
             rows: hits,
             commit_box,
             ..
-        } = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        } = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         assert_eq!(commit_box.height, COMMIT_BOX_MESSAGE_ROWS + 1);
         assert_eq!(commit_box.y, area.bottom() - (COMMIT_BOX_MESSAGE_ROWS + 1));
@@ -819,7 +846,14 @@ mod tests {
             file_list,
             max_scroll,
             ..
-        } = render_git_panel(&mut buffer_no_scroll, area, Some(&ws), &no_scroll, &palette);
+        } = render_git_panel(
+            &mut buffer_no_scroll,
+            area,
+            Some(&ws),
+            &no_scroll,
+            true,
+            &palette,
+        );
         assert!(buffer_text(&buffer_no_scroll).contains("CHANGES · 10"));
         assert_eq!(file_list, Rect::new(0, 1, 30, 8));
         // Lines are [spacer, header, 10 files]: 12 lines in an 8-row viewport.
@@ -831,8 +865,14 @@ mod tests {
             scroll: 2,
             ..Default::default()
         };
-        let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer_scrolled, area, Some(&ws), &scrolled, &palette);
+        let GitPanelHits { rows: hits, .. } = render_git_panel(
+            &mut buffer_scrolled,
+            area,
+            Some(&ws),
+            &scrolled,
+            true,
+            &palette,
+        );
         let text = buffer_text(&buffer_scrolled);
         assert!(!text.contains("CHANGES"));
         assert_eq!(hits.first().map(|(_, index)| *index), Some(0));
@@ -851,7 +891,7 @@ mod tests {
         };
 
         let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let indices: Vec<usize> = hits.iter().map(|(_, index)| *index).collect();
         assert_eq!(indices, (2..10).collect::<Vec<_>>());
@@ -869,7 +909,7 @@ mod tests {
         };
 
         let GitPanelHits { max_scroll, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         assert_eq!(max_scroll, 0);
         assert!(buffer_text(&buffer).contains("CHANGES · 3"));
@@ -907,7 +947,7 @@ mod tests {
             ..Default::default()
         };
 
-        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let text = buffer_text(&buffer);
         assert!(text.contains("first line"));
@@ -930,7 +970,7 @@ mod tests {
         let GitPanelHits {
             commit_box: short_box,
             ..
-        } = render_git_panel(&mut buffer_short, area, Some(&ws), &short, &palette);
+        } = render_git_panel(&mut buffer_short, area, Some(&ws), &short, true, &palette);
 
         let mut buffer_long = Buffer::empty(area);
         let long = ClientGitPanelState {
@@ -942,7 +982,7 @@ mod tests {
         let GitPanelHits {
             commit_box: long_box,
             ..
-        } = render_git_panel(&mut buffer_long, area, Some(&ws), &long, &palette);
+        } = render_git_panel(&mut buffer_long, area, Some(&ws), &long, true, &palette);
 
         assert_eq!(short_box.height, COMMIT_BOX_MESSAGE_ROWS + 1);
         assert_eq!(long_box.height, COMMIT_BOX_MESSAGE_ROWS + 1);
@@ -961,7 +1001,7 @@ mod tests {
             ..Default::default()
         };
 
-        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let text = buffer_text(&buffer);
         assert!(!text.contains("one"));
@@ -979,7 +1019,7 @@ mod tests {
         let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
         let git_panel = ClientGitPanelState::default();
 
-        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         assert!(buffer_text(&buffer).contains("Message…"));
     }
@@ -998,7 +1038,7 @@ mod tests {
         };
 
         let GitPanelHits { commit_box, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let message_y = commit_box.y + 1;
         let cursor_x = area.x + 1 + display_width("hi");
@@ -1019,7 +1059,7 @@ mod tests {
             ..Default::default()
         };
 
-        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let text = buffer_text(&buffer);
         assert!(text.contains("one"));
@@ -1086,7 +1126,7 @@ mod tests {
         let ws = workspace(true, Some(working_tree));
         let git_panel = ClientGitPanelState::default();
 
-        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let text = buffer_text(&buffer);
         assert!(text.contains("git.rs"));
@@ -1110,7 +1150,7 @@ mod tests {
         let git_panel = ClientGitPanelState::default();
 
         let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let file_row_y = hits[0].0.y;
         assert_eq!(buffer[(area.x + 2, file_row_y)].symbol(), "s");
@@ -1144,7 +1184,7 @@ mod tests {
         };
 
         let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let selected_rect = hits.iter().find(|(_, index)| *index == 1).unwrap().0;
         let other_rect = hits.iter().find(|(_, index)| *index == 0).unwrap().0;
@@ -1185,6 +1225,7 @@ mod tests {
             area,
             Some(&ws),
             &ClientGitPanelState::default(),
+            true,
             &palette,
         );
 
@@ -1206,7 +1247,7 @@ mod tests {
         };
 
         let GitPanelHits { rows: hits, .. } =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, true, &palette);
 
         let added_y = hits[0].0.y;
         let modified_y = hits[1].0.y;
@@ -1229,6 +1270,7 @@ mod tests {
             area,
             Some(&ws),
             &ClientGitPanelState::default(),
+            true,
             &palette,
         );
 
@@ -1239,6 +1281,84 @@ mod tests {
         };
         assert_eq!(buffer[(find("↑"), area.y)].fg, palette.green);
         assert_eq!(buffer[(find("↓"), area.y)].fg, palette.overlay0);
+    }
+
+    fn branch_line(
+        ws: &ClientShellWorkspace,
+        ahead_behind_tracked: bool,
+        palette: &Palette,
+    ) -> (String, Buffer) {
+        let area = Rect::new(0, 0, 30, 16);
+        let mut buffer = Buffer::empty(area);
+        render_git_panel(
+            &mut buffer,
+            area,
+            Some(ws),
+            &ClientGitPanelState::default(),
+            ahead_behind_tracked,
+            palette,
+        );
+        let line = (area.x..area.right())
+            .map(|x| buffer[(x, area.y)].symbol().to_string())
+            .collect::<String>();
+        (line.trim_end().to_string(), buffer)
+    }
+
+    const UNPUBLISHED_BRANCH_ICON_GLYPH: char = '\u{f0ee}';
+
+    #[test]
+    fn the_unpublished_icon_ends_with_the_nerd_font_cloud_upload_glyph() {
+        assert_eq!(
+            UNPUBLISHED_BRANCH_ICON.chars().last(),
+            Some(UNPUBLISHED_BRANCH_ICON_GLYPH)
+        );
+    }
+
+    #[test]
+    fn a_branch_without_upstream_shows_the_unpublished_icon_instead_of_counts() {
+        let palette = test_palette();
+        let mut ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        ws.git_ahead_behind = None;
+
+        let (line, buffer) = branch_line(&ws, true, &palette);
+
+        assert_eq!(line, format!(" main  {UNPUBLISHED_BRANCH_ICON_GLYPH}"));
+        let cloud_x = u16::try_from(
+            line.chars()
+                .position(|c| c == UNPUBLISHED_BRANCH_ICON_GLYPH)
+                .unwrap_or(0),
+        )
+        .unwrap_or(0);
+        assert_eq!(buffer[(cloud_x, 0)].fg, palette.blue);
+    }
+
+    #[test]
+    fn the_unpublished_icon_is_not_shown_when_counts_exist_or_cannot_be_trusted() {
+        let palette = test_palette();
+
+        let tracked = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        assert!(!branch_line(&tracked, true, &palette)
+            .0
+            .contains(UNPUBLISHED_BRANCH_ICON_GLYPH));
+
+        let mut untracked_counts = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        untracked_counts.git_ahead_behind = None;
+        // The server only computes counts for a `git_status` sidebar token; without it a missing
+        // count says nothing about the upstream.
+        assert_eq!(branch_line(&untracked_counts, false, &palette).0, " main");
+
+        let mut detached = workspace(true, Some(ClientShellGitWorkingTree::default()));
+        detached.git_ahead_behind = None;
+        detached.branch = None;
+        assert!(!branch_line(&detached, true, &palette)
+            .0
+            .contains(UNPUBLISHED_BRANCH_ICON_GLYPH));
+
+        let mut loading = workspace(true, None);
+        loading.git_ahead_behind = None;
+        assert!(!branch_line(&loading, true, &palette)
+            .0
+            .contains(UNPUBLISHED_BRANCH_ICON_GLYPH));
     }
 
     #[test]
@@ -1257,6 +1377,7 @@ mod tests {
             area,
             Some(&ws),
             &ClientGitPanelState::default(),
+            true,
             &palette,
         );
 
