@@ -1814,6 +1814,12 @@ impl ClientShellState {
                     outcome,
                 );
             }
+            MouseEventKind::ScrollUp if super::contains(self.hits.git_file_list, point) => {
+                self.scroll_git_panel(-1, outcome);
+            }
+            MouseEventKind::ScrollDown if super::contains(self.hits.git_file_list, point) => {
+                self.scroll_git_panel(1, outcome);
+            }
             MouseEventKind::ScrollUp if super::contains(self.hits.agent_body, point) => {
                 let next = self.agent_scroll.saturating_sub(1);
                 if next != self.agent_scroll {

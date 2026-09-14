@@ -67,18 +67,63 @@ fn panel_lines(working_tree: &crate::protocol::ClientShellGitWorkingTree) -> Vec
     lines
 }
 
-/// Renders the sidebar's Git panel for the focused workspace. Returns the hit-test rect for
-/// each rendered file row keyed by its index into `panel_lines`'s `File` entries, plus the
-/// commit box's own hit-test rect (empty when the box wasn't drawn, e.g. no room or no repo).
+/// The scroll offset that keeps file `file_index` visible in a list viewport `viewport_rows`
+/// tall, moving as little as possible from `scroll`. The first file of a section also reveals
+/// the spacer and header above it, so scrolling back up shows the section title again.
+pub(in crate::client::shell) fn scroll_to_reveal_file(
+    working_tree: &crate::protocol::ClientShellGitWorkingTree,
+    file_index: usize,
+    scroll: usize,
+    viewport_rows: usize,
+) -> usize {
+    let lines = panel_lines(working_tree);
+    let Some(line) = lines
+        .iter()
+        .position(|line| matches!(line, GitPanelLine::File { index, .. } if *index == file_index))
+    else {
+        return scroll;
+    };
+    let first_in_section = matches!(
+        line.checked_sub(1).map(|previous| &lines[previous]),
+        Some(GitPanelLine::SectionHeader { .. })
+    );
+    let top = if first_in_section {
+        line.saturating_sub(2)
+    } else {
+        line
+    };
+    if top < scroll {
+        top
+    } else if viewport_rows > 0 && line >= scroll + viewport_rows {
+        line + 1 - viewport_rows
+    } else {
+        scroll
+    }
+}
+
+/// Hit-test results of one Git panel render.
+#[derive(Default)]
+pub(super) struct GitPanelHits {
+    /// Each rendered file row, keyed by its index into `panel_lines`'s `File` entries.
+    pub(super) rows: Vec<(Rect, usize)>,
+    /// The commit box (empty when it wasn't drawn, e.g. no room or no repo).
+    pub(super) commit_box: Rect,
+    /// The scrollable file list viewport (empty when there is no list to scroll).
+    pub(super) file_list: Rect,
+    /// The largest scroll offset that still fills the file list viewport.
+    pub(super) max_scroll: usize,
+}
+
+/// Renders the sidebar's Git panel for the focused workspace and returns its hit-test rects.
 pub(super) fn render_git_panel(
     buffer: &mut Buffer,
     area: Rect,
     workspace: Option<&crate::protocol::ClientShellWorkspace>,
     git_panel: &ClientGitPanelState,
     palette: &Palette,
-) -> (Vec<(Rect, usize)>, Rect) {
+) -> GitPanelHits {
     if area.is_empty() {
-        return (Vec::new(), Rect::default());
+        return GitPanelHits::default();
     }
     let Some(workspace) = workspace else {
         put_text(
@@ -89,7 +134,7 @@ pub(super) fn render_git_panel(
             " no focused workspace",
             Style::default().fg(palette.overlay0),
         );
-        return (Vec::new(), Rect::default());
+        return GitPanelHits::default();
     };
     if !workspace.git_repo {
         put_text(
@@ -100,7 +145,7 @@ pub(super) fn render_git_panel(
             " not a git repository",
             Style::default().fg(palette.overlay0),
         );
-        return (Vec::new(), Rect::default());
+        return GitPanelHits::default();
     }
 
     let mut y = area.y;
@@ -142,7 +187,7 @@ pub(super) fn render_git_panel(
     }
     y = y.saturating_add(1);
     if y >= area.bottom() {
-        return (Vec::new(), Rect::default());
+        return GitPanelHits::default();
     }
 
     if let Some(path) = &git_panel.pending_discard {
@@ -169,7 +214,7 @@ pub(super) fn render_git_panel(
         y = y.saturating_add(1);
     }
     if y >= area.bottom() {
-        return (Vec::new(), Rect::default());
+        return GitPanelHits::default();
     }
 
     // The commit box is always a real multi-row text field — not just when the draft is long —
@@ -226,7 +271,10 @@ pub(super) fn render_git_panel(
                 Style::default().fg(palette.overlay0),
             );
         }
-        return (Vec::new(), commit_box_rect);
+        return GitPanelHits {
+            commit_box: commit_box_rect,
+            ..GitPanelHits::default()
+        };
     };
 
     let lines = panel_lines(working_tree);
@@ -241,10 +289,14 @@ pub(super) fn render_git_panel(
                 Style::default().fg(palette.overlay0),
             );
         }
-        return (Vec::new(), commit_box_rect);
+        return GitPanelHits {
+            commit_box: commit_box_rect,
+            ..GitPanelHits::default()
+        };
     }
 
-    let max_scroll = lines.len().saturating_sub(1);
+    let file_list = Rect::new(area.x, y, area.width, list_bottom.saturating_sub(y));
+    let max_scroll = lines.len().saturating_sub(usize::from(file_list.height));
     let mut hits = Vec::new();
     for line in lines.iter().skip(git_panel.scroll.min(max_scroll)) {
         if y >= list_bottom {
@@ -310,7 +362,12 @@ pub(super) fn render_git_panel(
         }
         y = y.saturating_add(1);
     }
-    (hits, commit_box_rect)
+    GitPanelHits {
+        rows: hits,
+        commit_box: commit_box_rect,
+        file_list,
+        max_scroll,
+    }
 }
 
 /// Renders the commit box pinned to the bottom of the panel: a header naming the keybinding to
@@ -517,7 +574,8 @@ mod tests {
         let mut buffer = Buffer::empty(area);
         let git_panel = ClientGitPanelState::default();
 
-        let (hits, _commit_box) = render_git_panel(&mut buffer, area, None, &git_panel, &palette);
+        let GitPanelHits { rows: hits, .. } =
+            render_git_panel(&mut buffer, area, None, &git_panel, &palette);
 
         assert!(hits.is_empty());
         assert!(buffer_text(&buffer).contains("no focused workspace"));
@@ -531,7 +589,7 @@ mod tests {
         let git_panel = ClientGitPanelState::default();
         let ws = workspace(false, None);
 
-        let (hits, _commit_box) =
+        let GitPanelHits { rows: hits, .. } =
             render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         assert!(hits.is_empty());
@@ -546,7 +604,7 @@ mod tests {
         let git_panel = ClientGitPanelState::default();
         let ws = workspace(true, None);
 
-        let (hits, _commit_box) =
+        let GitPanelHits { rows: hits, .. } =
             render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         assert!(hits.is_empty());
@@ -563,7 +621,7 @@ mod tests {
         let git_panel = ClientGitPanelState::default();
         let ws = workspace(true, Some(ClientShellGitWorkingTree::default()));
 
-        let (hits, _commit_box) =
+        let GitPanelHits { rows: hits, .. } =
             render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         assert!(hits.is_empty());
@@ -590,7 +648,7 @@ mod tests {
         };
         let ws = workspace(true, Some(working_tree));
 
-        let (hits, _commit_box) =
+        let GitPanelHits { rows: hits, .. } =
             render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         let text = buffer_text(&buffer);
@@ -623,46 +681,118 @@ mod tests {
         };
         let ws = workspace(true, Some(working_tree));
 
-        let (hits, commit_box) =
-            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        let GitPanelHits {
+            rows: hits,
+            commit_box,
+            ..
+        } = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         assert_eq!(commit_box.height, COMMIT_BOX_MESSAGE_ROWS + 1);
         assert_eq!(commit_box.y, area.bottom() - (COMMIT_BOX_MESSAGE_ROWS + 1));
         assert!(hits.iter().all(|(rect, _)| rect.y < commit_box.y));
     }
 
+    fn unstaged_files(count: usize) -> ClientShellGitWorkingTree {
+        ClientShellGitWorkingTree {
+            staged: Vec::new(),
+            unstaged: (0..count)
+                .map(|index| ClientShellGitFileEntry {
+                    path: format!("file{index}.rs"),
+                    original_path: None,
+                    status: ClientShellGitFileStatus::Modified,
+                })
+                .collect(),
+        }
+    }
+
     #[test]
     fn scroll_skips_leading_lines() {
         let palette = test_palette();
+        // 16 rows: branch, an 8-row file list, the separator, then the 6-row commit box.
         let area = Rect::new(0, 0, 30, 16);
-        let working_tree = ClientShellGitWorkingTree {
-            staged: vec![ClientShellGitFileEntry {
-                path: "staged.rs".into(),
-                original_path: None,
-                status: ClientShellGitFileStatus::Added,
-            }],
-            unstaged: Vec::new(),
-        };
-        let ws = workspace(true, Some(working_tree));
+        let ws = workspace(true, Some(unstaged_files(10)));
 
         let mut buffer_no_scroll = Buffer::empty(area);
         let no_scroll = ClientGitPanelState::default();
-        render_git_panel(&mut buffer_no_scroll, area, Some(&ws), &no_scroll, &palette);
-        assert!(buffer_text(&buffer_no_scroll).contains("STAGED · 1"));
+        let GitPanelHits {
+            file_list,
+            max_scroll,
+            ..
+        } = render_git_panel(&mut buffer_no_scroll, area, Some(&ws), &no_scroll, &palette);
+        assert!(buffer_text(&buffer_no_scroll).contains("CHANGES · 10"));
+        assert_eq!(file_list, Rect::new(0, 1, 30, 8));
+        // Lines are [spacer, header, 10 files]: 12 lines in an 8-row viewport.
+        assert_eq!(max_scroll, 4);
 
-        // Lines are [spacer, header, file]; scrolling past the first two leaves only the file.
+        // Scrolling past the spacer and header starts the list at the first file.
         let mut buffer_scrolled = Buffer::empty(area);
         let scrolled = ClientGitPanelState {
-            selected: 0,
             scroll: 2,
             ..Default::default()
         };
-        let (hits, _commit_box) =
+        let GitPanelHits { rows: hits, .. } =
             render_git_panel(&mut buffer_scrolled, area, Some(&ws), &scrolled, &palette);
         let text = buffer_text(&buffer_scrolled);
-        assert!(!text.contains("STAGED"));
-        assert!(text.contains("staged.rs"));
-        assert_eq!(hits.len(), 1);
+        assert!(!text.contains("CHANGES"));
+        assert_eq!(hits.first().map(|(_, index)| *index), Some(0));
+        assert_eq!(hits.len(), 8);
+    }
+
+    #[test]
+    fn scroll_past_the_end_still_fills_the_viewport() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 16);
+        let ws = workspace(true, Some(unstaged_files(10)));
+        let mut buffer = Buffer::empty(area);
+        let git_panel = ClientGitPanelState {
+            scroll: 50,
+            ..Default::default()
+        };
+
+        let GitPanelHits { rows: hits, .. } =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+
+        let indices: Vec<usize> = hits.iter().map(|(_, index)| *index).collect();
+        assert_eq!(indices, (2..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_list_that_fits_does_not_scroll() {
+        let palette = test_palette();
+        let area = Rect::new(0, 0, 30, 16);
+        let ws = workspace(true, Some(unstaged_files(3)));
+        let mut buffer = Buffer::empty(area);
+        let git_panel = ClientGitPanelState {
+            scroll: 2,
+            ..Default::default()
+        };
+
+        let GitPanelHits { max_scroll, .. } =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+
+        assert_eq!(max_scroll, 0);
+        assert!(buffer_text(&buffer).contains("CHANGES · 3"));
+    }
+
+    #[test]
+    fn scroll_to_reveal_file_moves_the_viewport_only_as_needed() {
+        let working_tree = unstaged_files(10);
+        // File n sits on line n + 2, after the spacer and header.
+        assert_eq!(scroll_to_reveal_file(&working_tree, 3, 0, 8), 0);
+        assert_eq!(scroll_to_reveal_file(&working_tree, 6, 0, 8), 1);
+        assert_eq!(scroll_to_reveal_file(&working_tree, 9, 0, 8), 4);
+        assert_eq!(scroll_to_reveal_file(&working_tree, 4, 4, 8), 4);
+        assert_eq!(scroll_to_reveal_file(&working_tree, 3, 4, 8), 4);
+        assert_eq!(scroll_to_reveal_file(&working_tree, 1, 4, 8), 3);
+        // The first file of a section brings its header back into view.
+        assert_eq!(scroll_to_reveal_file(&working_tree, 0, 4, 8), 0);
+    }
+
+    #[test]
+    fn scroll_to_reveal_file_shows_the_second_section_header() {
+        let working_tree = two_section_working_tree();
+        // Lines: [spacer, STAGED, staged file, spacer, CHANGES, unstaged file].
+        assert_eq!(scroll_to_reveal_file(&working_tree, 1, 5, 2), 3);
     }
 
     #[test]
@@ -696,7 +826,10 @@ mod tests {
             commit_message: "short".into(),
             ..Default::default()
         };
-        let (_, short_box) = render_git_panel(&mut buffer_short, area, Some(&ws), &short, &palette);
+        let GitPanelHits {
+            commit_box: short_box,
+            ..
+        } = render_git_panel(&mut buffer_short, area, Some(&ws), &short, &palette);
 
         let mut buffer_long = Buffer::empty(area);
         let long = ClientGitPanelState {
@@ -705,7 +838,10 @@ mod tests {
                 .into(),
             ..Default::default()
         };
-        let (_, long_box) = render_git_panel(&mut buffer_long, area, Some(&ws), &long, &palette);
+        let GitPanelHits {
+            commit_box: long_box,
+            ..
+        } = render_git_panel(&mut buffer_long, area, Some(&ws), &long, &palette);
 
         assert_eq!(short_box.height, COMMIT_BOX_MESSAGE_ROWS + 1);
         assert_eq!(long_box.height, COMMIT_BOX_MESSAGE_ROWS + 1);
@@ -760,7 +896,8 @@ mod tests {
             ..Default::default()
         };
 
-        let (_, commit_box) = render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
+        let GitPanelHits { commit_box, .. } =
+            render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         let message_y = commit_box.y + 1;
         let cursor_x = area.x + 1 + display_width("hi");
@@ -871,7 +1008,7 @@ mod tests {
         let ws = workspace(true, Some(working_tree));
         let git_panel = ClientGitPanelState::default();
 
-        let (hits, _commit_box) =
+        let GitPanelHits { rows: hits, .. } =
             render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         let file_row_y = hits[0].0.y;
@@ -905,7 +1042,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (hits, _commit_box) =
+        let GitPanelHits { rows: hits, .. } =
             render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         let selected_rect = hits.iter().find(|(_, index)| *index == 1).unwrap().0;
@@ -942,7 +1079,7 @@ mod tests {
         let mut buffer = Buffer::empty(area);
         let ws = workspace(true, Some(two_section_working_tree()));
 
-        let (hits, _commit_box) = render_git_panel(
+        let GitPanelHits { rows: hits, .. } = render_git_panel(
             &mut buffer,
             area,
             Some(&ws),
@@ -967,7 +1104,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (hits, _commit_box) =
+        let GitPanelHits { rows: hits, .. } =
             render_git_panel(&mut buffer, area, Some(&ws), &git_panel, &palette);
 
         let added_y = hits[0].0.y;
@@ -1010,7 +1147,11 @@ mod tests {
         let mut buffer = Buffer::empty(area);
         let ws = workspace(true, Some(two_section_working_tree()));
 
-        let (hits, commit_box) = render_git_panel(
+        let GitPanelHits {
+            rows: hits,
+            commit_box,
+            ..
+        } = render_git_panel(
             &mut buffer,
             area,
             Some(&ws),

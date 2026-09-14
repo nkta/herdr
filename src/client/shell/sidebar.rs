@@ -215,13 +215,17 @@ pub(crate) fn render_sidebar(
                 .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
         );
         hits.workspace_body = body;
-        (hits.git_panel_rows, hits.git_commit_box) = super::git_panel::render_git_panel(
+        let git_hits = super::git_panel::render_git_panel(
             buffer,
             body,
             focused_workspace,
             state.git_panel,
             palette,
         );
+        hits.git_panel_rows = git_hits.rows;
+        hits.git_commit_box = git_hits.commit_box;
+        hits.git_file_list = git_hits.file_list;
+        hits.git_max_scroll = git_hits.max_scroll;
     } else {
         render_spaces_body(
             buffer,

@@ -193,6 +193,35 @@ impl ClientShellState {
         let next = (self.git_panel.selected as i32 + delta).clamp(0, count as i32 - 1) as usize;
         if next != self.git_panel.selected {
             self.git_panel.selected = next;
+            self.reveal_git_panel_selection();
+            outcome.repaint = true;
+        }
+    }
+
+    /// Scrolls the file list just enough to keep the selected file in view, using the viewport
+    /// measured by the last render.
+    fn reveal_git_panel_selection(&mut self) {
+        let viewport_rows = usize::from(self.hits.git_file_list.height);
+        let scroll = self.git_panel.scroll.min(self.hits.git_max_scroll);
+        let Some(working_tree) = self.focused_git_working_tree() else {
+            return;
+        };
+        self.git_panel.scroll = super::render::git_panel_scroll_to_reveal_file(
+            working_tree,
+            self.git_panel.selected,
+            scroll,
+            viewport_rows,
+        );
+    }
+
+    /// Scrolls the file list by `delta` rows from a mouse wheel, within the last render's range.
+    pub(super) fn scroll_git_panel(&mut self, delta: isize, outcome: &mut ClientShellInput) {
+        let current = self.git_panel.scroll.min(self.hits.git_max_scroll);
+        let next = current
+            .saturating_add_signed(delta)
+            .min(self.hits.git_max_scroll);
+        if next != self.git_panel.scroll {
+            self.git_panel.scroll = next;
             outcome.repaint = true;
         }
     }
@@ -836,6 +865,89 @@ mod tests {
 
     fn ctrl_key(code: KeyCode) -> crate::input::TerminalKey {
         crate::input::TerminalKey::new(code, KeyModifiers::CONTROL)
+    }
+
+    fn many_unstaged_files(count: usize) -> ClientShellGitWorkingTree {
+        ClientShellGitWorkingTree {
+            staged: Vec::new(),
+            unstaged: (0..count)
+                .map(|index| ClientShellGitFileEntry {
+                    path: format!("file{index}.rs"),
+                    original_path: None,
+                    status: ClientShellGitFileStatus::Modified,
+                })
+                .collect(),
+        }
+    }
+
+    fn rendered_git_rows(state: &ClientShellState) -> Vec<usize> {
+        state
+            .hits
+            .git_panel_rows
+            .iter()
+            .map(|(_, index)| *index)
+            .collect()
+    }
+
+    #[test]
+    fn moving_the_selection_down_scrolls_the_file_list_to_keep_it_visible() {
+        let mut state = test_state_with_working_tree(many_unstaged_files(40));
+        state.mode = ClientShellMode::SidebarGit;
+        state.compose(106, 30).expect("git panel frame");
+        assert!(!rendered_git_rows(&state).contains(&39));
+
+        let mut outcome = ClientShellInput::default();
+        for _ in 0..39 {
+            state.route_git_panel_key(&key(KeyCode::Down), &mut outcome);
+        }
+        state.compose(106, 30).expect("scrolled git panel frame");
+        assert_eq!(rendered_git_rows(&state).last(), Some(&39));
+
+        for _ in 0..39 {
+            state.route_git_panel_key(&key(KeyCode::Up), &mut outcome);
+        }
+        state
+            .compose(106, 30)
+            .expect("git panel frame scrolled back");
+        assert_eq!(state.git_panel.scroll, 0);
+        assert_eq!(rendered_git_rows(&state).first(), Some(&0));
+    }
+
+    #[test]
+    fn mouse_wheel_over_the_file_list_scrolls_it() {
+        let mut state = test_state_with_working_tree(many_unstaged_files(40));
+        state.compose(106, 30).expect("git panel frame");
+        let list = state.hits.git_file_list;
+        let workspace_scroll = state.workspace_scroll;
+        let wheel = |kind| {
+            RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column: list.x,
+                row: list.y,
+                modifiers: KeyModifiers::empty(),
+            })
+        };
+
+        state.handle_raw_events(vec![
+            wheel(MouseEventKind::ScrollDown),
+            wheel(MouseEventKind::ScrollDown),
+            wheel(MouseEventKind::ScrollDown),
+        ]);
+        state.compose(106, 30).expect("scrolled git panel frame");
+        assert_eq!(state.git_panel.scroll, 3);
+        assert_eq!(rendered_git_rows(&state).first(), Some(&1));
+        assert_eq!(state.workspace_scroll, workspace_scroll);
+
+        state.handle_raw_events(vec![wheel(MouseEventKind::ScrollUp)]);
+        assert_eq!(state.git_panel.scroll, 2);
+
+        let max_scroll = state.hits.git_max_scroll;
+        state.handle_raw_events(
+            (0..100)
+                .map(|_| wheel(MouseEventKind::ScrollDown))
+                .collect(),
+        );
+        assert_eq!(state.git_panel.scroll, max_scroll);
     }
 
     #[test]
