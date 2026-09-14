@@ -433,7 +433,9 @@ impl App {
         // The background install/check thread has finished either way.
         if matches!(
             ev,
-            AppEvent::UpdateReady { .. } | AppEvent::UpdateInstalled { .. }
+            AppEvent::UpdateReady { .. }
+                | AppEvent::UpdateInstalled { .. }
+                | AppEvent::UpdateCheckFinished
         ) {
             self.auto_install_in_flight = false;
         }

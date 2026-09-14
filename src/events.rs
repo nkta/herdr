@@ -138,6 +138,9 @@ pub enum AppEvent {
         exe_path: std::path::PathBuf,
         target_protocol: Option<u32>,
     },
+    /// A background update check returned, whether or not it sent
+    /// `UpdateReady` or `UpdateInstalled` first.
+    UpdateCheckFinished,
     /// Remote agent detection manifest update check finished.
     AgentDetectionManifestsUpdated {
         updated: Vec<crate::detect::manifest_update::ManifestUpdateCommit>,

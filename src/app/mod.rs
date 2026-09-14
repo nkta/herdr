@@ -1607,6 +1607,18 @@ mod tests {
     }
 
     #[test]
+    fn update_check_finished_without_release_clears_auto_install_in_flight() {
+        let mut app = test_app();
+        app.auto_install_in_flight = true;
+
+        app.handle_internal_event(AppEvent::UpdateCheckFinished);
+
+        assert!(!app.auto_install_in_flight);
+        assert!(app.state.update_available.is_none());
+        assert!(app.pending_update_handoff.is_none());
+    }
+
+    #[test]
     fn next_headless_loop_deadline_includes_the_update_handoff_attempt() {
         let mut app = test_app();
         app.next_auto_update_check = None;

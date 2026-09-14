@@ -113,7 +113,12 @@ impl App {
 
         let update_tx = self.event_tx.clone();
         let options = crate::update::AutoUpdateOptions { auto_install };
-        std::thread::spawn(move || crate::update::auto_update(update_tx, options));
+        std::thread::spawn(move || {
+            crate::update::auto_update(update_tx.clone(), options);
+            // A check that finds nothing or fails sends no other event, and a
+            // stuck in-flight flag would skip every later periodic check.
+            let _ = update_tx.blocking_send(crate::events::AppEvent::UpdateCheckFinished);
+        });
     }
 
     pub(crate) fn run_auto_update_check(&mut self) {
