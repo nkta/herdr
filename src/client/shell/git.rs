@@ -35,6 +35,9 @@ impl ClientShellState {
     /// in an invisible commit box) or let `s`/`u`/`d` act on a file the user can no longer see.
     pub(super) fn release_sidebar_git_focus_if_hidden(&mut self, outcome: &mut ClientShellInput) {
         let panel_visible = self.sidebar_view == SidebarSpacesView::Git && !self.sidebar_collapsed;
+        if !panel_visible {
+            self.popup_restore_mode = None;
+        }
         if panel_visible || self.mode != ClientShellMode::SidebarGit {
             return;
         }

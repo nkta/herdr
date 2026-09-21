@@ -290,6 +290,43 @@ fn popup_transition_dismisses_client_overlays_and_restores_pane_input_after_clos
 }
 
 #[test]
+fn popup_transition_restores_sidebar_git_mode_after_close() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.sidebar_view = SidebarSpacesView::Git;
+    state.mode = ClientShellMode::SidebarGit;
+
+    state.set_pane_surface(surface_with_popup());
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+    assert_eq!(state.popup_restore_mode, Some(ClientShellMode::SidebarGit));
+
+    state.set_pane_surface(surface());
+    assert_eq!(state.mode, ClientShellMode::SidebarGit);
+    assert_eq!(state.popup_restore_mode, None);
+}
+
+#[test]
+fn popup_transition_falls_back_to_terminal_mode_if_sidebar_git_hidden_on_close() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.sidebar_view = SidebarSpacesView::Git;
+    state.mode = ClientShellMode::SidebarGit;
+
+    state.set_pane_surface(surface_with_popup());
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+    assert_eq!(state.popup_restore_mode, Some(ClientShellMode::SidebarGit));
+
+    // Sidebar collapsed while popup was open
+    state.sidebar_collapsed = true;
+
+    state.set_pane_surface(surface());
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+    assert_eq!(state.popup_restore_mode, None);
+}
+
+#[test]
 fn popup_target_survives_surface_invalidation_during_resize() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

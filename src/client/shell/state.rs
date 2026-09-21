@@ -1037,6 +1037,7 @@ pub(crate) struct ClientShellState {
     pub(super) graphics: crate::kitty_graphics::surface::ClientState,
     pub(super) graphics_cell_size: crate::kitty_graphics::HostCellSize,
     pub(super) popup_terminal_id: Option<String>,
+    pub(super) popup_restore_mode: Option<ClientShellMode>,
     pub(super) sidebar_collapsed: bool,
     pub(super) sidebar_collapsed_manual: bool,
     pub(super) sidebar_view: SidebarSpacesView,
@@ -1205,6 +1206,7 @@ impl ClientShellState {
                 height_px: 1,
             },
             popup_terminal_id: None,
+            popup_restore_mode: None,
             sidebar_collapsed,
             sidebar_collapsed_manual: preferences.sidebar_collapsed.is_some(),
             sidebar_view: SidebarSpacesView::default(),
@@ -1403,6 +1405,7 @@ impl ClientShellState {
         self.pending_pane_surface = None;
         self.input_leases = ClientInputLeases::default();
         self.popup_terminal_id = None;
+        self.popup_restore_mode = None;
         self.chrome_drag = None;
         self.workspace_press = None;
         self.tab_press = None;
@@ -1835,7 +1838,23 @@ impl ClientShellState {
                 self.input_leases
                     .remove_target(&ClientInputTarget::Popup(terminal_id.clone()));
             }
-            self.mode = ClientShellMode::Terminal;
+            if previous_popup.is_none() && next_popup.is_some() {
+                self.popup_restore_mode = (self.mode == ClientShellMode::SidebarGit)
+                    .then_some(ClientShellMode::SidebarGit);
+                self.mode = ClientShellMode::Terminal;
+            } else if previous_popup.is_some() && next_popup.is_none() {
+                let restore_git = (self.popup_restore_mode.take() == Some(ClientShellMode::SidebarGit)
+                    || self.mode == ClientShellMode::SidebarGit)
+                    && self.sidebar_view == SidebarSpacesView::Git
+                    && !self.sidebar_collapsed;
+                self.mode = if restore_git {
+                    ClientShellMode::SidebarGit
+                } else {
+                    ClientShellMode::Terminal
+                };
+            } else {
+                self.mode = ClientShellMode::Terminal;
+            }
             self.navigate_workspace_id = None;
             if !matches!(
                 self.overlay.as_ref(),
