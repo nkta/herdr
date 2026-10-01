@@ -1,8 +1,8 @@
 use super::*;
 
+mod event_fairness;
 #[path = "git_panel_interest.rs"]
 mod git_panel_interest_tests;
-mod event_fairness;
 mod native_graphics;
 #[path = "pane_move.rs"]
 mod pane_move_tests;

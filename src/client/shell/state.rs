@@ -1816,7 +1816,8 @@ impl ClientShellState {
                     .then_some(ClientShellMode::SidebarGit);
                 self.mode = ClientShellMode::Terminal;
             } else if previous_popup.is_some() && next_popup.is_none() {
-                let restore_git = (self.popup_restore_mode.take() == Some(ClientShellMode::SidebarGit)
+                let restore_git = (self.popup_restore_mode.take()
+                    == Some(ClientShellMode::SidebarGit)
                     || self.mode == ClientShellMode::SidebarGit)
                     && self.sidebar_view == SidebarSpacesView::Git
                     && !self.sidebar_collapsed;
