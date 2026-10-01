@@ -611,7 +611,13 @@ impl ClientShellState {
                 None
             }
             ClientShellMode::SidebarGit => {
-                if crate::config::terminal_key_matches_combo(key, self.config.keybinds.prefix) {
+                if self
+                    .config
+                    .keybinds
+                    .prefix
+                    .iter()
+                    .any(|combo| crate::config::terminal_key_matches_combo(key, *combo))
+                {
                     self.mode = ClientShellMode::Prefix;
                     outcome.repaint = true;
                 } else {

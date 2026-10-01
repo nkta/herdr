@@ -229,9 +229,9 @@ pub(crate) fn keybind_help_groups(
 /// user is already holding prefix mode.
 pub(crate) fn prefix_hint_groups(
     keybinds: &Keybinds,
-    prefix: (crossterm::event::KeyCode, crossterm::event::KeyModifiers),
+    prefixes: &[crate::config::KeyCombo],
 ) -> Vec<KeybindHelpGroup> {
-    keybind_help_groups(keybinds, &[prefix])
+    keybind_help_groups(keybinds, prefixes)
         .into_iter()
         .filter_map(|(title, entries)| {
             let entries: Vec<KeybindHelpEntry> = entries

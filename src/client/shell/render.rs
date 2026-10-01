@@ -423,7 +423,7 @@ struct PrefixHintColumn {
 fn prefix_hint_columns(keybinds: &LiveKeybindConfig, max_rows: usize) -> Vec<PrefixHintColumn> {
     let max_rows = max_rows.max(1);
     let mut columns = Vec::new();
-    for (title, entries) in crate::input::prefix_hint_groups(&keybinds.keybinds, keybinds.prefix) {
+    for (title, entries) in crate::input::prefix_hint_groups(&keybinds.keybinds, &keybinds.prefix) {
         let entries: Vec<(String, String)> = entries
             .into_iter()
             .map(|(keys, label)| (keys, label.into_owned()))
@@ -565,7 +565,7 @@ pub(super) fn render_prefix_hint_panel(
     }
 
     let footer_y = inner.bottom() - 1;
-    let prefix = crate::config::format_key_combo(keybinds.prefix);
+    let prefix = crate::config::format_prefix_combos(&keybinds.prefix);
     let mut x = inner.x;
     for (text, style) in [
         ("esc", key_style),
