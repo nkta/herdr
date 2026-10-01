@@ -23,6 +23,9 @@ pub(crate) use super::unix_common::{
     ClientStreamReader, StatusCommandGuard,
 };
 
+mod bootstrap;
+pub(crate) use bootstrap::{configure_server_daemon_context, prepare_server_process};
+
 #[cfg(test)]
 mod config_file_tests;
 
@@ -667,6 +670,10 @@ pub fn read_clipboard_text() -> Option<String> {
         LimitedRead::Empty => None,
         LimitedRead::Oversized => unreachable!("oversized clipboard text is handled before wait"),
     }
+}
+
+pub fn clipboard_text_matches(_bytes: &[u8]) -> Option<bool> {
+    None
 }
 
 pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
