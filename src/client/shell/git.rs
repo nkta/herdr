@@ -804,8 +804,7 @@ impl ClientShellState {
     fn open_git_branch_create_overlay(&mut self, workspace_id: String) {
         self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
             title: "new branch",
-            input: String::new(),
-            replace_on_type: false,
+            input: TextEditor::new("", false),
             target: ClientRenameTarget::GitBranchCreate { workspace_id },
         }));
     }
@@ -1687,8 +1686,7 @@ mod tests {
         let mut state = test_state_with_working_tree(one_unstaged_file());
         state.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
             title: "new branch",
-            input: "  feature/x  ".into(),
-            replace_on_type: false,
+            input: TextEditor::new("  feature/x  ", false),
             target: ClientRenameTarget::GitBranchCreate {
                 workspace_id: "w1".into(),
             },
@@ -1712,8 +1710,7 @@ mod tests {
         let mut state = test_state_with_working_tree(one_unstaged_file());
         state.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
             title: "new branch",
-            input: "   ".into(),
-            replace_on_type: false,
+            input: TextEditor::new("   ", false),
             target: ClientRenameTarget::GitBranchCreate {
                 workspace_id: "w1".into(),
             },

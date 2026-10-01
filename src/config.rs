@@ -19,7 +19,7 @@ pub use self::{
         upsert_section_value,
     },
     keybinds::{
-        format_prefix_combos, normalize_key_combo, terminal_key_matches_combo, ActionKeybinds,
+        format_key_combo, format_prefix_combos, normalize_key_combo, terminal_key_matches_combo, ActionKeybinds,
         BindingConfig, CommandKeybindConfig, CustomCommandAction, CustomCommandKeybind,
         IndexedKeybind, KeyCombo, Keybinds, LiveKeybindConfig,
     },

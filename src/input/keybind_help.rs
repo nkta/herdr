@@ -231,7 +231,7 @@ pub(crate) fn prefix_hint_groups(
     keybinds: &Keybinds,
     prefix: (crossterm::event::KeyCode, crossterm::event::KeyModifiers),
 ) -> Vec<KeybindHelpGroup> {
-    keybind_help_groups(keybinds, prefix)
+    keybind_help_groups(keybinds, &[prefix])
         .into_iter()
         .filter_map(|(title, entries)| {
             let entries: Vec<KeybindHelpEntry> = entries

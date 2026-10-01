@@ -115,7 +115,7 @@ pub(crate) fn update_handoff_blocker(
         .flat_map(|tab| tab.panes.values())
         .map(|pane| &pane.attached_terminal_id)
         .collect();
-    if attached.len() > crate::server::handoff::MAX_FDS_PER_HANDOFF {
+    if attached.len() > crate::server::handoff::FDS_PER_MESSAGE {
         return Some(UpdateHandoffBlocker::TooManyPanes);
     }
 
@@ -229,7 +229,7 @@ mod tests {
 
         let mut state = AppState::test_new();
         let mut ws = crate::workspace::Workspace::test_new("many");
-        for _ in 0..crate::server::handoff::MAX_FDS_PER_HANDOFF {
+        for _ in 0..crate::server::handoff::FDS_PER_MESSAGE {
             ws.test_split(Direction::Vertical);
         }
         state.workspaces.push(ws);

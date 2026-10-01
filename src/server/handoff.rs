@@ -26,7 +26,7 @@ const OWNED_ACK_TIMEOUT: Duration = Duration::from_millis(500);
 // control message caps out at 253 descriptors on Linux and 254 on macOS, so the
 // batch stays well below both limits and the number of panes stays unbounded.
 #[cfg(unix)]
-const FDS_PER_MESSAGE: usize = 64;
+pub(crate) const FDS_PER_MESSAGE: usize = 64;
 #[cfg(unix)]
 pub(crate) const MAX_REPLAY_BYTES_PER_PANE: usize = 8 * 1024;
 #[cfg(unix)]
